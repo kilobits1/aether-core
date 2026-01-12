@@ -10,7 +10,7 @@ from firebase_admin import credentials, firestore
 if "FIREBASE_KEY" in os.environ:
     firebase_key = json.loads(os.environ["FIREBASE_KEY"])
 else:
-    firebase_key = json.load(open("llave.json")) # Cambia "llave.json" por el nombre de tu archivo
+    firebase_key = json.load(open("llave.json"))  # solo para uso local
 
 cred = credentials.Certificate(firebase_key)
 if not firebase_admin._apps:
@@ -21,19 +21,43 @@ db = firestore.client()
 # --- AETHER CORE ---
 def aether(command):
     ts = datetime.datetime.utcnow().isoformat()
+
     data = {
         "time": ts,
         "command": command,
+        "type": "order",
+        "agent": "aether-core",
+        "session": "default",
         "source": "huggingface"
     }
-    db.collection("aether_memory").add(data)
-    return f"🧠 AETHER ONLINE\n\nTime (UTC): {ts}\n\nCommand received:\n\"{command}\"\n\nStatus: Stored in Firebase"
 
-with gr.Blocks() as demo:
+    db.collection("aether_memory").add(data)
+
+    return (
+        "🧠 AETHER ONLINE\n\n"
+        f"Time (UTC): {ts}\n\n"
+        "Command received:\n"
+        f"\"{command}\"\n\n"
+        "Status:\n"
+        "- Stored in Firebase\n"
+        "- Structured memory created\n"
+        "- Awaiting next instruction"
+    )
+
+# --- UI ---
+with gr.Blocks(title="AETHER CORE") as demo:
     gr.Markdown("## 🧠 Aether Core — Cerebro Central")
-    inp = gr.Textbox(label="Orden")
-    out = gr.Textbox(label="Respuesta")
-    btn = gr.Button("Enviar")
+    gr.Markdown("Sistema privado · Memoria persistente · 24/7")
+
+    inp = gr.Textbox(
+        label="Orden para Aether",
+        placeholder="Ej: analizar estado del sistema",
+        lines=4
+    )
+
+    out = gr.Textbox(label="Respuesta de Aether", lines=10)
+
+    btn = gr.Button("Enviar orden")
     btn.click(aether, inp, out)
 
 demo.launch()
