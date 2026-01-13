@@ -4,36 +4,34 @@ import json
 import os
 import firebase_admin
 from firebase_admin import credentials, firestore
-from fpdf import FPDF
-import numpy as np
-import ezdxf
 
 # ======================================================
-# 1. FIREBASE INIT (Tu configuración original)
+# 1. FIREBASE INIT
 # ======================================================
+firebase_key = None
 if "FIREBASE_KEY" in os.environ:
     firebase_key = json.loads(os.environ["FIREBASE_KEY"])
-else:
-    try:
-        firebase_key = json.load(open("llave.json"))
-    except:
-        firebase_key = None
+elif os.path.exists("llave.json"):
+    firebase_key = json.load(open("llave.json"))
 
 if firebase_key and not firebase_admin._apps:
     cred = credentials.Certificate(firebase_key)
     firebase_admin.initialize_app(cred)
 
-db = firestore.client()
+db = firestore.client() if firebase_key else None
 
 # ======================================================
-# 2. CORE CONFIG & ONTOLOGÍA (Tus 11 dominios originales)
+# 2. CORE CONFIG
 # ======================================================
 AGENT_NAME = "aether-core"
-EXECUTION_MODE = "SIMULATION"
+EXECUTION_MODE = "SIMULATION"  # REAL en el futuro
 DEFAULT_SESSION = "default"
 
+# ======================================================
+# 3. ONTOLOGÍA MULTIDOMINIO
+# ======================================================
 DOMAIN_MAP = {
-    "matematicas": ["ecuacion", "calculo", "modelo", "optimizacion", "simular"],
+    "matematicas": ["ecuacion", "calculo", "modelo", "optimizacion"],
     "fisica": ["fuerza", "energia", "movimiento", "termodinamica"],
     "quimica": ["reaccion", "molecula", "compuesto"],
     "electronica": ["voltaje", "corriente", "sensor", "esp32", "pcb", "relay", "rele"],
@@ -43,145 +41,165 @@ DOMAIN_MAP = {
     "biologia": ["celula", "genetica", "organismo"],
     "nanotecnologia": ["nanobot", "nano", "molecular"],
     "ambiental": ["contaminacion", "agua", "energia limpia"],
-    "aeroespacial": ["nasa", "orbita", "satelite", "cohete"]
-}
-
-HARDWARE_LIBRARY = {
-    "temperatura": "// Firmware Arduino\n#include \"DHT.h\"\nvoid setup() { dht.begin(); }",
-    "distancia": "// Firmware Arduino\nconst int trig = 5; void setup() { pinMode(trig, OUTPUT); }",
-    "movimiento": "// Firmware PIR\nconst int pir = 13; void setup() { pinMode(pir, INPUT); }",
-    "rele": "// Código para Relé\nvoid setup() { pinMode(5, OUTPUT); }\nvoid loop() { digitalWrite(5, HIGH); delay(1000); }"
+    "aeroespacial": ["orbita", "satelite", "cohete", "nasa"]
 }
 
 # ======================================================
-# 3. LÓGICA DE CLASIFICACIÓN (Tus funciones originales)
+# 4. HARDWARE KNOWLEDGE BASE
+# ======================================================
+HARDWARE_LIBRARY = {
+    "sensor temperatura": "// Arduino DHT\n#include <DHT.h>\nDHT dht(2, DHT11);\nvoid setup(){ dht.begin(); }",
+    "rele": "// Relé básico\nvoid setup(){ pinMode(5, OUTPUT); }\nvoid loop(){ digitalWrite(5, HIGH); }",
+    "ultrasonico": "// HC-SR04\nconst int trig=9, echo=10;\nvoid setup(){ pinMode(trig,OUTPUT); pinMode(echo,INPUT); }"
+}
+
+# ======================================================
+# 5. COGNITIVE FUNCTIONS
 # ======================================================
 def select_mode(command):
     t = command.lower()
-    if any(k in t for k in ["analizar", "calcular", "demostrar", "simular"]): return "scientific"
-    if any(k in t for k in ["diseñar", "crear", "construir"]): return "engineering"
+    if any(k in t for k in ["analizar", "calcular", "demostrar", "simular"]):
+        return "scientific"
+    if any(k in t for k in ["diseñar", "crear", "construir"]):
+        return "engineering"
     return "general"
 
 def detect_domains(command):
     t = command.lower()
-    domains = [d for d, keywords in DOMAIN_MAP.items() if any(k in t for k in keywords)]
+    domains = [d for d, k in DOMAIN_MAP.items() if any(x in t for x in k)]
     return domains if domains else ["general"]
 
-def classify_command(text):
-    t = text.lower()
-    if "estado" in t: return "system"
-    if any(k in t for k in ["hardware", "codigo", "plano", "cad"]): return "engineering"
-    if t.startswith("crear") or t.startswith("diseñar"): return "task"
+def classify_command(command):
+    t = command.lower()
+    if "estado" in t:
+        return "system"
+    if any(k in t for k in ["hardware", "sensor", "rele", "pcb"]):
+        return "engineering"
+    if t.startswith(("crear", "diseñar")):
+        return "task"
     return "order"
 
-def decide_output_artifact(mode, domains):
-    if "nanotecnologia" in domains or "medicina" in domains: return "scientific_design"
-    if "electronica" in domains or "mecatronica" in domains or "mecanica" in domains: return "engineering_design"
-    if mode == "scientific": return "mathematical_model"
+def decide_artifact(mode, domains):
+    if any(d in domains for d in ["medicina", "nanotecnologia"]):
+        return "scientific_design"
+    if any(d in domains for d in ["electronica", "mecatronica", "mecanica"]):
+        return "engineering_design"
+    if mode == "scientific":
+        return "mathematical_model"
     return "technical_plan"
 
 # ======================================================
-# 4. EXPORTACIÓN DE ARCHIVOS (CAD y PDF)
+# 6. MEMORY SYSTEM
 # ======================================================
-def create_pdf(content, title):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=11)
-    clean_text = content.encode('latin-1', 'replace').decode('latin-1')
-    pdf.multi_cell(0, 8, txt=clean_text)
-    path = f"Reporte_{title}.pdf"
-    pdf.output(path)
-    return path
-
-def create_dxf(title):
-    doc = ezdxf.new('R2010')
-    msp = doc.modelspace()
-    # Método seguro add_line para evitar errores de versión
-    msp.add_line((0, 0), (100, 0))
-    msp.add_line((100, 0), (100, 100))
-    msp.add_line((100, 100), (0, 100))
-    msp.add_line((0, 100), (0, 0))
-    msp.add_circle((50, 50), radius=10)
-    path = f"Plano_{title}.dxf"
-    doc.saveas(path)
-    return path
+def log_event(data):
+    if not db:
+        return
+    data.update({
+        "agent": AGENT_NAME,
+        "execution_mode": EXECUTION_MODE,
+        "time": datetime.datetime.utcnow().isoformat()
+    })
+    db.collection("aether_memory").add(data)
 
 # ======================================================
-# 5. GENERADORES DE ARTEFACTOS (Todos tus originales + CAD)
+# 7. ARTIFACT GENERATORS
 # ======================================================
-def generate_scientific_design(command, domains):
-    return f"📄 DISEÑO CIENTÍFICO\nObjetivo: {command}\nDominios: {', '.join(domains)}\n\n1. Fundamentación\n2. Principios\n3. Modelo\n4. Supuestos\n5. Aplicación"
+def generate_scientific_design(cmd, domains):
+    return f"""📄 DISEÑO CIENTÍFICO AVANZADO
+Objetivo: {cmd}
+Dominios: {", ".join(domains)}
 
-def generate_engineering_design(command, domains):
-    h_code = next((code for hw, code in HARDWARE_LIBRARY.items() if hw in command.lower()), "")
-    cad_specs = "\n--- ESPECIFICACIONES CAD ---\nEntidad: Pieza/Gabinete\nFormato: DXF\nCapas: Contorno, Perforaciones.\n"
-    soft_specs = "\n--- SOFTWARE ADICIONAL ---\n[Python]: import serial\n[Java]: public class Aether {}\n[C++]: Serial.println(\"Aether Core Active\");\n"
-    
-    base = f"⚙️ DISEÑO DE INGENIERÍA COMPLETO\nObjetivo: {command}\nDominios: {', '.join(domains)}\n"
-    base += cad_specs
-    if h_code: base += f"\n--- FIRMWARE GENERADO ---\n{h_code}"
-    base += soft_specs
-    return base
+1. Fundamentación teórica
+2. Principios científicos
+3. Modelo conceptual
+4. Supuestos críticos
+5. Aplicaciones reales
+Estado: Listo para simulación.
+"""
 
-def generate_mathematical_model(command):
-    t_vals = np.linspace(0, 10, 5)
-    return f"📐 MODELO MATEMÁTICO & SIMULACIÓN\nProblema: {command}\n\n1. Variables\n2. Ecuaciones\n3. Simulación: {t_vals.tolist()}\n4. Interpretación"
+def generate_engineering_design(cmd, domains):
+    firmware = next((v for k, v in HARDWARE_LIBRARY.items() if k in cmd.lower()), "")
+    return f"""⚙️ DISEÑO DE INGENIERÍA
+Objetivo: {cmd}
+Dominios: {", ".join(domains)}
 
-def generate_technical_plan(command):
-    return f"🧠 PLAN TÉCNICO MASTER\nObjetivo: {command}\n\n1. Definición\n2. Estrategia\n3. Recursos\n4. Próximos pasos"
+1. Arquitectura del sistema
+2. Componentes clave
+3. Lógica de control
+4. Seguridad y límites
+5. Preparación para prototipo
+
+--- FIRMWARE BASE ---
+{firmware if firmware else "No requerido"}
+"""
+
+def generate_mathematical_model(cmd):
+    return f"""📐 MODELO MATEMÁTICO
+Problema: {cmd}
+
+1. Variables
+2. Ecuaciones
+3. Supuestos
+4. Método numérico
+5. Interpretación
+"""
+
+def generate_technical_plan(cmd):
+    return f"""🧠 PLAN TÉCNICO GENERAL
+Objetivo: {cmd}
+
+1. Definición del problema
+2. Estrategia
+3. Recursos
+4. Riesgos
+5. Próximos pasos
+"""
 
 # ======================================================
-# 6. CORE BRAIN (Aether Pro Unificado)
+# 8. CORE BRAIN
 # ======================================================
 def aether(command, session=DEFAULT_SESSION):
     cmd_type = classify_command(command)
     mode = select_mode(command)
     domains = detect_domains(command)
-    artifact = decide_output_artifact(mode, domains)
+    artifact = decide_artifact(mode, domains)
+
+    log_event({
+        "command": command,
+        "session": session,
+        "type": cmd_type,
+        "mode": mode,
+        "domains": domains,
+        "artifact": artifact
+    })
 
     if cmd_type == "system":
-        output = f"🧠 ESTADO DE AETHER\nAgente: {AGENT_NAME}\nModo: {EXECUTION_MODE}\nEstado: OPERATIVO"
-    elif artifact == "scientific_design":
-        output = generate_scientific_design(command, domains)
-    elif artifact == "engineering_design":
-        output = generate_engineering_design(command, domains)
-    elif artifact == "mathematical_model":
-        output = generate_mathematical_model(command)
-    else:
-        output = generate_technical_plan(command)
+        return f"""🧠 ESTADO DE AETHER
+Agente: {AGENT_NAME}
+Modo: {EXECUTION_MODE}
+Sesión: {session}
+Capacidades: Cognición · Ingeniería · Ciencia · Memoria
+Estado: OPERATIVO
+"""
 
-    # Firebase log
-    if db:
-        try:
-            db.collection("aether_memory").add({
-                "time": datetime.datetime.utcnow().isoformat(),
-                "command": command,
-                "session": session,
-                "domains": domains
-            })
-        except: pass
+    if artifact == "scientific_design":
+        return generate_scientific_design(command, domains)
+    if artifact == "engineering_design":
+        return generate_engineering_design(command, domains)
+    if artifact == "mathematical_model":
+        return generate_mathematical_model(command)
 
-    # Generación de Archivos
-    pdf_path = create_pdf(output, session)
-    dxf_path = create_dxf(session)
-    
-    return output, pdf_path, dxf_path
+    return generate_technical_plan(command)
 
 # ======================================================
-# 7. UI (Gradio)
+# 9. UI
 # ======================================================
 with gr.Blocks(title="AETHER CORE") as demo:
-    gr.Markdown("## 🧠 Aether Core — Ingeniería, CAD y Software")
-    with gr.Row():
-        with gr.Column():
-            inp = gr.Textbox(label="Orden Técnica", lines=4)
-            sess = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
-            btn = gr.Button("GENERAR TODO", variant="primary")
-        with gr.Column():
-            out_txt = gr.Textbox(label="Vista Previa", lines=12)
-            out_pdf = gr.File(label="📄 Descargar Reporte PDF")
-            out_dxf = gr.File(label="📐 Descargar Plano CAD (.DXF)")
-
-    btn.click(aether, inputs=[inp, sess], outputs=[out_txt, out_pdf, out_dxf])
+    gr.Markdown("## 🧠 AETHER CORE — Inteligencia Técnica Autónoma")
+    session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
+    inp = gr.Textbox(label="Orden", lines=4)
+    out = gr.Textbox(label="Resultado", lines=30)
+    btn = gr.Button("EJECUTAR AETHER", variant="primary")
+    btn.click(aether, inputs=[inp, session], outputs=out)
 
 demo.launch()
