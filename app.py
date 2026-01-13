@@ -647,18 +647,33 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     export_out = gr.Code(label="Export demo1", language="json")
 
     def chat_send(message, history):
-        message = (message or "").strip()
-        if not message:
-            return history, ""
+    message = (message or "").strip()
 
-        decision, result = run_now(message)
-        reply = format_reply(decision, result)
+    # SIEMPRE normalizamos a lista de dicts
+    if not history or not isinstance(history, list):
+        history = []
 
-        if CHAT_MODE == "messages":
-            history = _normalize_history_to_messages(history)
-            history.append({"role": "user", "content": message})
-            history.append({"role": "assistant", "content": reply})
-            return history, ""
+    fixed = []
+    for h in history:
+        if isinstance(h, dict) and "role" in h and "content" in h:
+            fixed.append({"role": h["role"], "content": str(h["content"])})
+        elif isinstance(h, (tuple, list)) and len(h) == 2:
+            fixed.append({"role": "user", "content": str(h[0])})
+            fixed.append({"role": "assistant", "content": str(h[1])})
+
+    history = fixed
+
+    if not message:
+        return history, ""
+
+    # Ejecutar Aether
+    decision, result = run_now(message)
+    reply = format_reply(decision, result)
+
+    history.append({"role": "user", "content": message})
+    history.append({"role": "assistant", "content": reply})
+
+    return history, ""
 
         # tuples mode (Gradio viejo)
         history = history or []
