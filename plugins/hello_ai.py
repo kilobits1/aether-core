@@ -3,7 +3,5 @@ def can_handle(command: str) -> bool:
     return "hola" in c or "hello" in c or "saluda" in c
 
 def run(command: str):
-    return {
-        "message": "Hola, soy un módulo IA de ejemplo.",
-        "input": command
-    }
+    return {"ok": True, "msg": "Hola desde un módulo IA hot-reload.", "input": command}
+
