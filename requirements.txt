@@ -1,5 +1,5 @@
 gradio
+numpy
 firebase-admin
 fpdf
-numpy
-ezdxf
+matplotlib
