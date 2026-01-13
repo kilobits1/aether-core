@@ -1,5 +1,6 @@
 # ======================================================
 # AETHER CORE — HF SPACES FIXED (PRO TOTAL) + CHAT (GRADIO "messages" DEFAULT)
+#   CORREGIDO: loader *_ai.py + plugins can_handle/run + decide_engine por plugins
 # ======================================================
 
 import os
@@ -8,6 +9,7 @@ import json
 import uuid
 import threading
 import importlib.util
+import sys
 from queue import PriorityQueue
 from datetime import datetime, timezone
 
@@ -165,17 +167,46 @@ def enqueue_task(command, priority=5, source="external"):
 def detect_domains(command):
     c = (command or "").lower()
     d = set()
+
+    # ciencia
     if any(k in c for k in ["física", "ecuación", "modelo", "simulación", "simular"]):
         d.add("science")
+
+    # comandos / plugins (clave para "task a" y "reload plugins")
+    if c.startswith("task ") or "reload" in c or "plugin" in c or "plugins" in c or "modulos" in c or "módulos" in c:
+        d.add("ai")
+
+    # texto común (mantiene tu comportamiento previo)
     if any(k in c for k in ["ia", "algoritmo", "llm", "embedding", "hola", "hello"]):
-        d.add("ai")  # permite que hello_ai se active por texto común
+        d.add("ai")
+
     return list(d) or ["general"]
 
+def _any_module_can_handle(command: str) -> bool:
+    c = (command or "").strip()
+    if not c:
+        return False
+    with modules_lock:
+        mods = list(LOADED_MODULES.values())
+    for mod in mods:
+        try:
+            if hasattr(mod, "can_handle") and mod.can_handle(c):
+                return True
+        except Exception:
+            continue
+    return False
+
 def decide_engine(command, domains):
+    # Si cualquier plugin lo puede manejar, SIEMPRE usa ai_module
+    if _any_module_can_handle(command):
+        return {"mode": "ai_module", "confidence": 0.99}
+
     if "science" in domains:
         return {"mode": "scientific", "confidence": 0.9}
+
     if "ai" in domains:
         return {"mode": "ai_module", "confidence": 0.95}
+
     return {"mode": "general", "confidence": 0.7}
 
 # -----------------------------
@@ -197,24 +228,36 @@ def execute_general(command):
     return {"success": True, "result": (command or "").upper()}
 
 # -----------------------------
-# MÓDULOS IA HOT-RELOAD
+# MÓDULOS IA HOT-RELOAD (CORREGIDO)
+#   - Solo carga *_ai.py
+#   - Usa nombre estable en sys.modules
+#   - Exige can_handle + run (como tu core ya espera)
 # -----------------------------
 def reload_ai_modules():
     loaded = {}
     for fn in os.listdir(MODULES_DIR):
-        if not fn.endswith(".py"):
+        # SOLO plugins AI
+        if not fn.endswith("_ai.py"):
+            continue
+        if fn.startswith("_"):
             continue
 
-        name = fn[:-3]
+        name = fn[:-3]  # sin .py
         path = os.path.join(MODULES_DIR, fn)
+
         try:
-            spec = importlib.util.spec_from_file_location(name, path)
+            mod_name = f"plugins.{name}"  # nombre estable
+            spec = importlib.util.spec_from_file_location(mod_name, path)
             if not spec or not spec.loader:
                 continue
             mod = importlib.util.module_from_spec(spec)
+            sys.modules[mod_name] = mod
             spec.loader.exec_module(mod)
+
             if hasattr(mod, "can_handle") and hasattr(mod, "run"):
                 loaded[name] = mod
+            else:
+                log_event("MODULE_SKIPPED", {"module": name, "reason": "missing can_handle/run"})
         except Exception as e:
             log_event("MODULE_LOAD_ERROR", {"module": name, "error": str(e)})
 
@@ -513,10 +556,10 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420)  # NO type=
+    chat = gr.Chatbot(label="AETHER Chat", height=420)
     user_msg = gr.Textbox(
         label="Escribe aquí",
-        placeholder="Ej: hola aether / optimizar algoritmo IA",
+        placeholder="Ej: hola aether / task a / task last / reload plugins",
         lines=2,
     )
 
@@ -536,7 +579,6 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     btn_enqueue.click(fn=ui_enqueue, inputs=[user_msg, prio], outputs=[status])
     btn_reload.click(fn=ui_reload_modules, inputs=[], outputs=[status])
 
-    # logs manual (evita rarezas de .load con inputs)
     btn_refresh_logs.click(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
     logs_n.change(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
 
