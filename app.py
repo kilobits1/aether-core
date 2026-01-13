@@ -251,6 +251,110 @@ DECISIÓN:
 📊 Autoevaluación: {quality}/3
 ESTADO: APRENDIENDO Y CORRIGIÉNDOSE
 """
+# ======================================================
+# 16. OBJETIVOS INTERNOS 🎯 (NIVEL 9)
+# ======================================================
+def generate_internal_goals(domains, insights):
+    goals = []
+
+    if "ia" in domains:
+        goals.append("Mejorar modelos internos de decisión")
+
+    if "fisica" in domains or "matematicas" in domains:
+        goals.append("Optimizar simulaciones científicas")
+
+    for i in insights:
+        if "débil" in i or "optimizable" in i:
+            goals.append("Aumentar calidad de respuestas futuras")
+
+    if not goals:
+        goals.append("Observar y aprender pasivamente")
+
+    return list(set(goals))
+
+
+# ======================================================
+# 17. MEMORIA DE OBJETIVOS 🧠
+# ======================================================
+def store_goals(goals, session):
+    if not db:
+        return
+    for g in goals:
+        db.collection("aether_goals").add({
+            "goal": g,
+            "session": session,
+            "timestamp": datetime.datetime.utcnow().isoformat()
+        })
+
+
+# ======================================================
+# 18. VOLUNTAD SIMULADA ⚙️
+# ======================================================
+def simulated_will(goals, priority):
+    actions = []
+
+    for g in goals:
+        if priority in ["ALTA", "MEDIA-ALTA"]:
+            actions.append(f"Ejecutar activamente: {g}")
+        else:
+            actions.append(f"Monitorear pasivamente: {g}")
+
+    return actions
+
+
+# ======================================================
+# 19. CORE BRAIN — VOLITIVO 🧠🔥 (NIVEL 9)
+# ======================================================
+def aether(command, session=DEFAULT_SESSION):
+
+    domains = detect_domains(command)
+    decision = decide_engine(command, domains)
+    plan = build_action_plan(decision, command)
+    priority = autonomous_priority(domains)
+
+    if decision["mode"] == "scientific":
+        output = scientific_engine(command)
+    else:
+        output = f"""
+🧠 AETHER — RESPUESTA INTELIGENTE
+
+Orden:
+{command}
+
+Plan:
+- """ + "\n- ".join(plan)
+
+    quality = self_evaluate(output)
+    insights = meta_analysis(command, output, quality, decision)
+
+    goals = generate_internal_goals(domains, insights)
+    will_actions = simulated_will(goals, priority)
+
+    store_goals(goals, session)
+    store_memory(command, output, domains, session, quality)
+
+    return f"""
+🧠 AETHER CORE — NIVEL 9 (AGENTE VOLITIVO)
+
+DECISIÓN:
+- Modo: {decision['mode']}
+- Confianza: {decision['confidence']}
+- Prioridad: {priority}
+
+{output}
+
+🎯 OBJETIVOS INTERNOS:
+- """ + "\n- ".join(goals) + """
+
+⚙️ VOLUNTAD SIMULADA:
+- """ + "\n- ".join(will_actions) + """
+
+🧩 META-ANÁLISIS:
+- """ + "\n- ".join(insights) + f"""
+
+📊 Autoevaluación: {quality}/3
+ESTADO: AGENTE AUTÓNOMO CON INTENCIÓN
+"""
 
 # ======================================================
 # 8. REPORTE CIENTÍFICO (PDF)
