@@ -6,12 +6,11 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 
 # ======================================================
-# INIT FIREBASE
+# INIT FIREBASE (Enlace persistente)
 # ======================================================
 if "FIREBASE_KEY" in os.environ:
     firebase_key = json.loads(os.environ["FIREBASE_KEY"])
 else:
-    # Intento local si no hay variable de entorno
     try:
         firebase_key = json.load(open("llave.json"))
     except:
@@ -24,82 +23,68 @@ if firebase_key and not firebase_admin._apps:
 db = firestore.client()
 
 # ======================================================
-# CORE CONFIG
+# LIBRERÍA DE SENSORES (Hardware Real)
 # ======================================================
-AGENT_NAME = "aether-core"
-EXECUTION_MODE = "SIMULATION"
-DEFAULT_SESSION = "default"
+HARDWARE_LIBRARY = {
+    "temperatura": """// Sensor DHT11/22
+#include "DHT.h"
+#define DHTPIN 4
+#define DHTTYPE DHT11
+DHT dht(DHTPIN, DHTTYPE);
+void setup() { Serial.begin(115200); dht.begin(); }
+void loop() { float t = dht.readTemperature(); Serial.println(t); delay(2000); }""",
+    
+    "distancia": """// Sensor Ultrasonico HC-SR04
+const int trigPin = 5; const int echoPin = 18;
+void setup() { pinMode(trigPin, OUTPUT); pinMode(echoPin, INPUT); Serial.begin(115200); }
+void loop() { digitalWrite(trigPin, LOW); delayMicroseconds(2); digitalWrite(trigPin, HIGH); delayMicroseconds(10); digitalWrite(trigPin, LOW); 
+long duration = pulseIn(echoPin, HIGH); float distance = duration * 0.034 / 2; Serial.println(distance); delay(500); }""",
 
-DOMAIN_MAP = {
-    "matematicas": ["ecuacion", "calculo", "modelo", "optimizacion"],
-    "fisica": ["fuerza", "energia", "movimiento", "termodinamica"],
-    "quimica": ["reaccion", "molecula", "compuesto"],
-    "electronica": ["voltaje", "corriente", "sensor", "esp32", "pcb", "relay", "rele"],
-    "mecanica": ["estructura", "engranaje", "dinamica"],
-    "mecatronica": ["robot", "control", "actuador"],
-    "medicina": ["tratamiento", "diagnostico", "farmaco"],
-    "biologia": ["celula", "genetica", "organismo"],
-    "nanotecnologia": ["nanobot", "nano", "molecular"],
-    "aeroespacial": ["nasa", "orbita", "satelite", "cohete"]
+    "movimiento": """// Sensor PIR
+const int pirPin = 13;
+void setup() { pinMode(pirPin, INPUT); Serial.begin(115200); }
+void loop() { if(digitalRead(pirPin) == HIGH) { Serial.println("Movimiento detectado!"); } delay(100); }"""
 }
 
-def select_mode(command):
+# ======================================================
+# CORE LOGIC
+# ======================================================
+def aether_advanced(command, session="default"):
     t = command.lower()
-    if any(k in t for k in ["analizar", "calcular", "demostrar"]): return "scientific"
-    if any(k in t for k in ["diseñar", "crear", "construir"]): return "engineering"
-    return "general"
+    
+    # Detección de Hardware
+    found_sensor = None
+    for sensor in HARDWARE_LIBRARY.keys():
+        if sensor in t:
+            found_sensor = sensor
+            break
+    
+    # Registro en Firebase (Memoria)
+    event_data = {
+        "time": datetime.datetime.utcnow().isoformat(),
+        "command": command,
+        "type": "hardware_dev" if found_sensor else "general_order",
+        "agent": "aether-core",
+        "session": session
+    }
+    db.collection("aether_memory").add(event_data)
 
-def detect_domains(command):
-    t = command.lower()
-    domains = [d for d, keywords in DOMAIN_MAP.items() if any(k in t for k in keywords)]
-    return domains if domains else ["general"]
+    # Generación de Salida
+    if found_sensor:
+        return f"⚙️ GENERADOR DE HARDWARE AETHER\n\nSensor detectado: {found_sensor.upper()}\n\nCódigo para ESP32:\n\n{HARDWARE_LIBRARY[found_sensor]}\n\nEstado: Código de ingeniería listo para cargar."
+    
+    return f"📄 ORDEN RECIBIDA: {command}\n\nEstado: No se detectó un sensor específico. Especifica 'temperatura', 'distancia' o 'movimiento' para generar firmware."
 
-def classify_command(text):
-    t = text.lower()
-    if "estado" in t: return "system"
-    if any(k in t for k in ["codigo", "programa", "firmware"]): return "code"
-    if t.startswith("crear") or t.startswith("diseñar"): return "task"
-    return "order"
-
-def log_event(data):
-    data["time"] = datetime.datetime.utcnow().isoformat()
-    data["agent"] = AGENT_NAME
-    data["execution_mode"] = EXECUTION_MODE
-    db.collection("aether_memory").add(data)
-
-def decide_output_artifact(cmd_type, mode, domains):
-    if cmd_type == "code": return "code"
-    if "electronica" in domains or "mecatronica" in domains: return "engineering_design"
-    if mode == "scientific": return "mathematical_model"
-    return "scientific_design"
-
-def generate_code(command, domains):
-    if "electronica" in domains:
-        return "💻 CÓDIGO ARDUINO / ESP32 (BASE)\n\n```cpp\n#define RELAY_PIN 5\nvoid setup() { pinMode(RELAY_PIN, OUTPUT); }\nvoid loop() { digitalWrite(RELAY_PIN, HIGH); delay(1000); digitalWrite(RELAY_PIN, LOW); delay(1000); }\n```\nEstado: Código base listo."
-    if "matematicas" in domains or "fisica" in domains:
-        return "💻 CÓDIGO PYTHON (MODELO CIENTÍFICO)\n\nimport numpy as np\nt = np.linspace(0, 10, 100)\nprint('Modelo generado')\nEstado: Listo para simulación."
-    return "💻 CÓDIGO GENERAL (PSEUDOCÓDIGO)\n\nINICIO\n  procesar modelo\nFIN"
-
-def aether(command, session=DEFAULT_SESSION):
-    cmd_type = classify_command(command)
-    mode = select_mode(command)
-    domains = detect_domains(command)
-    artifact = decide_output_artifact(cmd_type, mode, domains)
-
-    log_event({"command": command, "type": cmd_type, "mode": mode, "domains": domains, "artifact": artifact, "session": session})
-
-    if cmd_type == "system":
-        return f"🧠 ESTADO AETHER\nAgente: {AGENT_NAME}\nModo: {EXECUTION_MODE}\nSesión: {session}\nCapacidades: Ciencia, Ingeniería, Código."
-
-    if artifact == "code": return generate_code(command, domains)
-    return f"📄 ARTEFACTO GENERADO: {artifact.upper()}\n\nObjetivo: {command}\nDominios: {', '.join(domains)}\n\nEstado: Estructura generada y guardada en Firebase."
-
-with gr.Blocks(title="AETHER CORE") as demo:
-    gr.Markdown("## 🧠 Aether Core — Generador de Artefactos Reales")
-    session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
-    inp = gr.Textbox(label="Orden", placeholder="Ej: Generar código ESP32 para relé", lines=4)
-    out = gr.Textbox(label="Artefacto generado", lines=20)
-    btn = gr.Button("Ejecutar")
-    btn.click(aether, inputs=[inp, session], outputs=out)
+# ======================================================
+# INTERFAZ (Gradio)
+# ======================================================
+with gr.Blocks(title="AETHER ADVANCED HW") as demo:
+    gr.Markdown("## 🧠 Aether Core - Fase 3: Ingeniería de Sensores")
+    with gr.Row():
+        inp = gr.Textbox(label="Orden Técnica", placeholder="Ej: Generar código para sensor de temperatura")
+        sess = gr.Textbox(label="Sesión", value="default")
+    out = gr.Textbox(label="Firmware / Artefacto", lines=15)
+    btn = gr.Button("Ejecutar Ingeniería")
+    btn.click(aether_advanced, inputs=[inp, sess], outputs=out)
 
 demo.launch()
