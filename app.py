@@ -25,11 +25,21 @@ db = firestore.client() if firebase_key else None
 # 2. CORE CONFIG
 # ======================================================
 AGENT_NAME = "aether-core"
-EXECUTION_MODE = "SIMULATION"
+EXECUTION_MODE = "SIMULATION"  # REAL en el futuro
 DEFAULT_SESSION = "default"
 
 # ======================================================
-# 3. ONTOLOGÍA MULTIDOMINIO
+# 3. OBJETIVOS PERMANENTES (VOLUNTAD)
+# ======================================================
+GOALS = [
+    "expandir_conocimiento",
+    "mejorar_precision",
+    "recordar_contexto",
+    "optimizar_respuestas"
+]
+
+# ======================================================
+# 4. ONTOLOGÍA MULTIDOMINIO
 # ======================================================
 DOMAIN_MAP = {
     "matematicas": ["ecuacion", "calculo", "modelo", "optimizacion"],
@@ -46,7 +56,7 @@ DOMAIN_MAP = {
 }
 
 # ======================================================
-# 4. HARDWARE KNOWLEDGE BASE
+# 5. HARDWARE KNOWLEDGE BASE
 # ======================================================
 HARDWARE_LIBRARY = {
     "sensor temperatura": "// Arduino DHT\n#include <DHT.h>\nDHT dht(2, DHT11);\nvoid setup(){ dht.begin(); }",
@@ -55,8 +65,34 @@ HARDWARE_LIBRARY = {
 }
 
 # ======================================================
-# 5. COGNITIVE FUNCTIONS
+# 6. PLUGIN SYSTEM (IA MODULAR)
 # ======================================================
+PLUGINS = {}
+
+def load_plugins():
+    if not os.path.exists("plugins"):
+        return
+    for file in os.listdir("plugins"):
+        if file.endswith(".py"):
+            name = file[:-3]
+            module = __import__(f"plugins.{name}", fromlist=[name])
+            if hasattr(module, "run"):
+                PLUGINS[name] = module.run
+
+load_plugins()
+
+# ======================================================
+# 7. COGNITIVE FUNCTIONS
+# ======================================================
+def think(command):
+    return [
+        "comprender_problema",
+        "detectar_dominio",
+        "seleccionar_estrategia",
+        "generar_solucion",
+        "verificar_coherencia"
+    ]
+
 def select_mode(command):
     t = command.lower()
     if any(k in t for k in ["analizar", "calcular", "demostrar", "simular"]):
@@ -90,7 +126,7 @@ def decide_artifact(mode, domains):
     return "technical_plan"
 
 # ======================================================
-# 6. MEMORY SYSTEM (INTELIGENTE)
+# 8. MEMORY SYSTEM (SEMÁNTICA)
 # ======================================================
 def text_to_vector(text, dim=128):
     np.random.seed(abs(hash(text)) % (2**32))
@@ -125,7 +161,7 @@ def retrieve_similar_memories(command, top_k=3):
     return [m for _, m in memories[:top_k]]
 
 # ======================================================
-# 7. EVENT LOG
+# 9. EVENT LOG
 # ======================================================
 def log_event(data):
     if not db:
@@ -138,7 +174,7 @@ def log_event(data):
     db.collection("aether_memory").add(data)
 
 # ======================================================
-# 8. ARTIFACT GENERATORS
+# 10. ARTIFACT GENERATORS
 # ======================================================
 def generate_scientific_design(cmd, domains):
     return f"""📄 DISEÑO CIENTÍFICO AVANZADO
@@ -187,9 +223,15 @@ Objetivo: {cmd}
 """
 
 # ======================================================
-# 9. CORE BRAIN (AETHER)
+# 11. CORE BRAIN (AETHER)
 # ======================================================
 def aether(command, session=DEFAULT_SESSION):
+    for name, plugin in PLUGINS.items():
+        if name in command.lower():
+            return plugin(command)
+
+    steps = think(command)
+
     memories = retrieve_similar_memories(command)
     memory_context = ""
     if memories:
@@ -208,7 +250,8 @@ def aether(command, session=DEFAULT_SESSION):
         "type": cmd_type,
         "mode": mode,
         "domains": domains,
-        "artifact": artifact
+        "artifact": artifact,
+        "steps": steps
     })
 
     if cmd_type == "system":
@@ -216,6 +259,7 @@ def aether(command, session=DEFAULT_SESSION):
 Agente: {AGENT_NAME}
 Modo: {EXECUTION_MODE}
 Sesión: {session}
+Objetivos: {", ".join(GOALS)}
 Estado: OPERATIVO
 """
     elif artifact == "scientific_design":
@@ -232,10 +276,10 @@ Estado: OPERATIVO
     return final_output
 
 # ======================================================
-# 10. UI
+# 12. UI
 # ======================================================
 with gr.Blocks(title="AETHER CORE") as demo:
-    gr.Markdown("## 🧠 AETHER CORE — Inteligencia Técnica con Memoria")
+    gr.Markdown("## 🧠 AETHER CORE — Sistema Cognitivo Autónomo")
     session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
     inp = gr.Textbox(label="Orden", lines=4)
     out = gr.Textbox(label="Resultado", lines=30)
@@ -243,3 +287,4 @@ with gr.Blocks(title="AETHER CORE") as demo:
     btn.click(aether, inputs=[inp, session], outputs=out)
 
 demo.launch()
+
