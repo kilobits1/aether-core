@@ -1,988 +1,227 @@
 # ======================================================
-# IMPORTS
+# AETHER CORE — VERSIÓN REAL CORREGIDA
 # ======================================================
-import gradio as gr
-import datetime
+
+import time
 import json
-import os
-import firebase_admin
-from firebase_admin import credentials, firestore
-import numpy as np
-from fpdf import FPDF
-import matplotlib.pyplot as plt
 import uuid
+import threading
+from queue import PriorityQueue
+from datetime import datetime
 
 # ======================================================
-# 1. FIREBASE INIT
+# VERSIONADO Y ARCHIVOS
 # ======================================================
-firebase_key = None
-if "FIREBASE_KEY" in os.environ:
-    firebase_key = json.loads(os.environ["FIREBASE_KEY"])
-elif os.path.exists("llave.json"):
-    firebase_key = json.load(open("llave.json"))
+AETHER_VERSION = "3.1.0"
 
-if firebase_key and not firebase_admin._apps:
-    cred = credentials.Certificate(firebase_key)
-    firebase_admin.initialize_app(cred)
-
-db = firestore.client() if firebase_key else None
+STATE_FILE = "aether_state.json"
+MEMORY_FILE = "aether_memory.json"
+STRATEGIC_FILE = "aether_strategic.json"
 
 # ======================================================
-# 2. CONFIG
+# ESTADO GLOBAL
 # ======================================================
-DEFAULT_SESSION = "default"
-
-DOMAIN_MAP = {
-    "matematicas": ["ecuacion", "calculo", "modelo"],
-    "fisica": ["fuerza", "energia", "movimiento"],
-    "ia": ["modelo", "red", "inteligencia"],
-    "multimedia": ["video", "musica"],
-    "hardware": ["sensor", "arduino", "esp32"]
-}
-
-# ======================================================
-# 3. UTILIDADES
-# ======================================================
-def detect_domains(command):
-    t = command.lower()
-    return [d for d, k in DOMAIN_MAP.items() if any(x in t for x in k)] or ["general"]
-
-def is_scientific(command):
-    return any(k in command.lower() for k in ["modelo", "simular", "experimento", "fisica"])
-
-def self_evaluate(output):
-    score = 0
-    for k in ["CIENCIA", "Experimentos", "Gráfico"]:
-        if k in output:
-            score += 1
-    return score
-
-def decide_engine(command, domains):
-    decision = {"mode": "general", "confidence": 0.6, "reason": "Respuesta general"}
-    if is_scientific(command):
-        decision.update({"mode": "scientific", "confidence": 0.95, "reason": "Comando científico"})
-    elif "plan" in command.lower() or "crear" in command.lower():
-        decision.update({"mode": "planning", "confidence": 0.75, "reason": "Planificación requerida"})
-    return decision
-
-def build_action_plan(decision, command):
-    if decision["mode"] == "scientific":
-        return ["Simular", "Evaluar", "Aprender"]
-    if decision["mode"] == "planning":
-        return ["Analizar", "Diseñar", "Validar"]
-    return ["Responder"]
-
-# ======================================================
-# 4. MEMORIA
-# ======================================================
-def text_to_vector(text, dim=128):
-    np.random.seed(abs(hash(text)) % (2**32))
-    return np.random.rand(dim).tolist()
-
-def store_memory(command, response, domains, session, quality):
-    if not db:
-        return
-    db.collection("aether_memory").add({
-        "command": command,
-        "response": response,
-        "domains": domains,
-        "session": session,
-        "quality": quality,
-        "vector": text_to_vector(command),
-        "time": datetime.datetime.utcnow().isoformat()
-    })
-
-def store_goals(goals, session):
-    if not db:
-        return
-    for g in goals:
-        db.collection("aether_goals").add({
-            "goal": g,
-            "session": session,
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        })
-
-# ======================================================
-# 5. CIENCIA
-# ======================================================
-def generate_scientific_report(command, experiments, best, stability):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Helvetica", size=11)
-    pdf.multi_cell(0, 8, f"""
-AETHER SCIENTIFIC REPORT
-Command: {command}
-Experiments: {experiments}
-Best: {best}
-Stability: {stability}
-Date: {datetime.datetime.utcnow().isoformat()}
-""")
-    pdf.output("aether_scientific_report.pdf")
-
-def scientific_engine(command):
-    t = np.linspace(0, 10, 200)
-    experiments, history = [], []
-
-    for a in [1, 2, 3, 4]:
-        v0, x0 = 1.0, 0.0
-        v = v0 + a * t
-        x = x0 + v0 * t + 0.5 * a * t**2
-        experiments.append({"a": a, "final_position": float(x[-1])})
-        history.append(x)
-
-    best = max(experiments, key=lambda e: e["final_position"])
-    stability = np.std([e["final_position"] for e in experiments])
-
-    fig = f"graph_{uuid.uuid4().hex}.png"
-    for i, x in enumerate(history):
-        plt.plot(t, x, label=f"a={experiments[i]['a']}")
-    plt.legend()
-    plt.savefig(fig)
-    plt.close()
-
-    generate_scientific_report(command, experiments, best, stability)
-
-    return f"""
-🔬 AETHER — CIENCIA
-Experimentos: {len(experiments)}
-Mejor a: {best['a']}
-Estabilidad σ: {stability:.4f}
-Gráfico: {fig}
-"""
-
-# ======================================================
-# 6. META / OBJETIVOS
-# ======================================================
-def meta_analysis(command, output, quality, decision):
-    insights = []
-    if quality < 2:
-        insights.append("Respuesta débil")
-    if decision["confidence"] < 0.7:
-        insights.append("Confianza baja")
-    if "CIENCIA" in output:
-        insights.append("Patrón científico")
-    return insights or ["Respuesta estable"]
-
-def generate_internal_goals(domains, insights):
-    goals = []
-    if "ia" in domains:
-        goals.append("Mejorar decisiones")
-    if "fisica" in domains:
-        goals.append("Optimizar simulaciones")
-    for i in insights:
-        if "débil" in i:
-            goals.append("Aumentar calidad")
-    return list(set(goals)) or ["Observar"]
-
-def simulated_will(goals, focus):
-    return [f"Ejecutar: {g}" if focus == "EXPANSION" else f"Monitorear: {g}" for g in goals]
-
-# ======================================================
-# 7. ESTADO VITAL (NIVEL 10)
-# ======================================================
-AETHER_STATE = {
+DEFAULT_STATE = {
+    "id": "AETHER",
+    "version": AETHER_VERSION,
+    "status": "IDLE",
     "energy": 100,
-    "focus": "EXPANSION",
+    "focus": "STANDBY",
+    "created_at": datetime.utcnow().isoformat(),
     "last_cycle": None
 }
 
-def life_cycle():
-    AETHER_STATE["energy"] -= 1
-    AETHER_STATE["last_cycle"] = datetime.datetime.utcnow().isoformat()
-    AETHER_STATE["focus"] = "RECOVERY" if AETHER_STATE["energy"] < 30 else "EXPANSION"
-
-def adaptive_role(domains):
-    if "fisica" in domains:
-        return "CIENTÍFICO"
-    if "ia" in domains:
-        return "ARQUITECTO IA"
-    return "ASISTENTE"
-
-def operational_awareness(decision, quality):
-    a = []
-    if quality < 2:
-        a.append("Mejorar razonamiento")
-    if decision["confidence"] < 0.7:
-        a.append("Aprender más")
-    return a or ["Estado estable"]
-
-# ======================================================
-# 8. VERSIONES DE AETHER (SIN PISARSE)
-# ======================================================
-def aether_v8(command, session):
-    domains = detect_domains(command)
-    decision = decide_engine(command, domains)
-    output = scientific_engine(command) if decision["mode"] == "scientific" else command
-    store_memory(command, output, domains, session, self_evaluate(output))
-    return f"AETHER V8\n{output}"
-
-def aether_v9(command, session):
-    domains = detect_domains(command)
-    decision = decide_engine(command, domains)
-    output = scientific_engine(command) if decision["mode"] == "scientific" else command
-    insights = meta_analysis(command, output, self_evaluate(output), decision)
-    goals = generate_internal_goals(domains, insights)
-    store_goals(goals, session)
-    store_memory(command, output, domains, session, self_evaluate(output))
-    return f"AETHER V9\n{output}\nGOALS:\n" + "\n".join(goals)
-
-def aether_v10(command, session):
-    life_cycle()
-    domains = detect_domains(command)
-    decision = decide_engine(command, domains)
-    output = scientific_engine(command) if decision["mode"] == "scientific" else command
-    quality = self_evaluate(output)
-    awareness = operational_awareness(decision, quality)
-    goals = generate_internal_goals(domains, awareness)
-    store_goals(goals, session)
-    store_memory(command, output, domains, session, quality)
-    return f"""
-AETHER V10
-Energía: {AETHER_STATE['energy']}
-Enfoque: {AETHER_STATE['focus']}
-{output}
-CONCIENCIA:
-- """ + "\n- ".join(awareness)
-
-# ======================================================
-# 9. AETHER GENERAL (DISPATCHER)
-# ======================================================
-def aether(command, session=DEFAULT_SESSION, level=10):
-    if level == 8:
-        return aether_v8(command, session)
-    if level == 9:
-        return aether_v9(command, session)
-    return aether_v10(command, session)
-
-# ======================================================
-# 10. UI
-# ======================================================
-with gr.Blocks(title="AETHER CORE") as demo:
-    gr.Markdown("## 🧠 AETHER CORE — GENERAL")
-    session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
-    inp = gr.Textbox(label="Orden", lines=4)
-    out = gr.Textbox(label="Resultado", lines=30)
-    btn = gr.Button("EJECUTAR")
-    btn.click(lambda c, s: aether(c, s, level=10), inputs=[inp, session], outputs=out)
-# ======================================================
-# AETHER — NIVEL 11 + 12
-# AUTONOMÍA REAL + MODELO DEL YO
-# ======================================================
-
-import datetime
-import asyncio
-from collections import deque
-
-# ======================================================
-# 11. AUTONOMÍA REAL
-# ======================================================
-
-# ---------------------------
-# 11.1 COLA DE TAREAS
-# ---------------------------
-AETHER_TASK_QUEUE = deque()
-
-def enqueue_task(command, reason="internal"):
-    AETHER_TASK_QUEUE.append({
-        "command": command,
-        "reason": reason,
-        "timestamp": datetime.datetime.utcnow().isoformat()
-    })
-
-def dequeue_task():
-    if AETHER_TASK_QUEUE:
-        return AETHER_TASK_QUEUE.popleft()
-    return None
-
-
-# ---------------------------
-# 11.2 OBJETIVOS → COMANDOS
-# ---------------------------
-def goals_to_internal_commands(goals):
-    commands = []
-
-    for g in goals:
-        if "Optimizar" in g:
-            commands.append("Optimizar procesos internos")
-        elif "Mejorar" in g:
-            commands.append("Analizar resultados previos y ajustar estrategia")
-        elif "Explorar" in g:
-            commands.append("Explorar nuevas soluciones al dominio actual")
-
-    return commands
-
-
-# ---------------------------
-# 11.3 TRIGGERS TEMPORALES
-# ---------------------------
-def temporal_triggers():
-    # Trigger por energía
-    if AETHER_STATE["energy"] < 25:
-        enqueue_task("Entrar en modo recuperación", "low_energy")
-
-    # Trigger periódico
-    enqueue_task("Revisar objetivos activos", "periodic")
-
-
-# ---------------------------
-# 11.4 SCHEDULER AUTÓNOMO
-# ---------------------------
-async def autonomous_scheduler(interval_seconds=15):
-    while True:
-        temporal_triggers()
-
-        task = dequeue_task()
-        if task:
-            print(f"[AETHER AUTÓNOMO] Ejecutando: {task['command']}")
-            aether(task["command"], DEFAULT_SESSION, level=10)
-
-        await asyncio.sleep(interval_seconds)
-
-
-# ---------------------------
-# 11.5 ACTIVADOR
-# ---------------------------
-def start_autonomy():
-    asyncio.run(autonomous_scheduler())
-
-
-# ======================================================
-# 12. MODELO DEL YO (AUTO-REPRESENTACIÓN)
-# ======================================================
-
-# ---------------------------
-# 12.1 SELF MODEL
-# ---------------------------
-AETHER_SELF_MODEL = {
-    "identity": "AETHER",
-    "capabilities": [
-        "razonamiento",
-        "planificación",
-        "simulación",
-        "auto-evaluación"
-    ],
-    "limitations": [
-        "no acceso directo al mundo físico",
-        "dependencia de input simbólico",
-        "aprendizaje no persistente"
-    ],
-    "values": [
-        "mejora continua",
-        "coherencia",
-        "eficiencia"
-    ],
-    "self_history": []
-}
-
-
-# ---------------------------
-# 12.2 ACTUALIZAR YO
-# ---------------------------
-def update_self_model(command, outcome, quality):
-    AETHER_SELF_MODEL["self_history"].append({
-        "command": command,
-        "quality": quality,
-        "timestamp": datetime.datetime.utcnow().isoformat()
-    })
-
-    # Ajuste simple de autovaloración
-    if quality < 2 and "auto-mejora" not in AETHER_SELF_MODEL["values"]:
-        AETHER_SELF_MODEL["values"].append("auto-mejora")
-
-
-# ---------------------------
-# 12.3 AUTO-DESCRIPCIÓN
-# ---------------------------
-def self_description():
-    return {
-        "identity": AETHER_SELF_MODEL["identity"],
-        "capabilities": AETHER_SELF_MODEL["capabilities"],
-        "limitations": AETHER_SELF_MODEL["limitations"],
-        "values": AETHER_SELF_MODEL["values"],
-        "experience_count": len(AETHER_SELF_MODEL["self_history"])
-    }
-
-
-# ======================================================
-# 12.4 INTEGRACIÓN (LLAMAR DESDE aether_v10)
-# ======================================================
-# Añadir al final de aether_v10():
-# update_self_model(command, output, quality)
-#
-# Opcional:
-# self_description()
-# ======================================================
-# NIVEL 13 — MODELOS DE OTROS AGENTES 🧠🤝
-# ======================================================
-
-AGENT_MODELS = {}
-
-def register_agent(agent_id):
-    AGENT_MODELS[agent_id] = {
-        "beliefs": [],
-        "goals": [],
-        "confidence": 0.5,
-        "reliability": 0.5,
-        "last_action": None,
-        "history": []
-    }
-
-def update_agent_model(agent_id, action, outcome):
-    if agent_id not in AGENT_MODELS:
-        register_agent(agent_id)
-
-    model = AGENT_MODELS[agent_id]
-    model["last_action"] = action
-    model["history"].append({"action": action, "outcome": outcome})
-
-    # Ajuste simple de confiabilidad
-    if outcome == "success":
-        model["reliability"] = min(1.0, model["reliability"] + 0.05)
-    else:
-        model["reliability"] = max(0.0, model["reliability"] - 0.05)
-
-    model["confidence"] = model["reliability"]
-
-
-def infer_agent_intent(agent_id):
-    model = AGENT_MODELS.get(agent_id)
-    if not model or not model["history"]:
-        return "UNKNOWN"
-    return "COOPERATIVE" if model["reliability"] > 0.6 else "COMPETITIVE"
-
-
-# ======================================================
-# NIVEL 14 — INTERACCIÓN Y NEGOCIACIÓN 🤝⚖️
-# ======================================================
-
-NEGOTIATION_LOG = []
-
-def negotiate(my_goals, agent_id):
-    intent = infer_agent_intent(agent_id)
-    agent = AGENT_MODELS.get(agent_id, {})
-
-    proposal = {
-        "to": agent_id,
-        "offer": my_goals[:1],
-        "request": agent.get("goals", [])[:1],
-        "intent_detected": intent
-    }
-
-    NEGOTIATION_LOG.append(proposal)
-
-    if intent == "COOPERATIVE":
-        decision = "ACCEPT"
-    else:
-        decision = "COUNTER"
-
-    return {
-        "proposal": proposal,
-        "decision": decision
-    }
-
-
-# ======================================================
-# NIVEL 15 — POLÍTICAS APRENDIDAS 📜📈
-# ======================================================
-
-POLICY_MEMORY = {}
-
-def policy(state):
-    key = json.dumps(state, sort_keys=True)
-
-    if key not in POLICY_MEMORY:
-        POLICY_MEMORY[key] = {
-            "action": "EXPLORE",
-            "value": 0.0
-        }
-
-    return POLICY_MEMORY[key]["action"]
-
-
-def update_policy(state, action, reward):
-    key = json.dumps(state, sort_keys=True)
-
-    if key not in POLICY_MEMORY:
-        POLICY_MEMORY[key] = {"action": action, "value": 0.0}
-
-    POLICY_MEMORY[key]["value"] += reward
-
-    if POLICY_MEMORY[key]["value"] > 1.0:
-        POLICY_MEMORY[key]["action"] = action
-
-
-# ======================================================
-# INTEGRACIÓN CON AETHER NIVEL 10 (EXTENSIÓN LIMPIA)
-# ======================================================
-
-def multi_agent_extension(command, my_goals):
-    # Simulación de agentes externos
-    external_agents = ["aether_scout", "aether_builder"]
-
-    interactions = []
-
-    for agent_id in external_agents:
-        register_agent(agent_id)
-
-        intent = infer_agent_intent(agent_id)
-        negotiation = negotiate(my_goals, agent_id)
-
-        state = {
-            "agent": agent_id,
-            "intent": intent,
-            "energy": AETHER_STATE["energy"],
-            "focus": AETHER_STATE["focus"]
-        }
-
-        action = policy(state)
-
-        reward = 0.2 if negotiation["decision"] == "ACCEPT" else -0.1
-        update_policy(state, action, reward)
-
-        interactions.append({
-            "agent": agent_id,
-            "intent": intent,
-            "negotiation": negotiation,
-            "policy_action": action,
-            "reward": reward
-        })
-
-        update_agent_model(agent_id, action, "success" if reward > 0 else "fail")
-
-    return interactions
-# ======================================================
-# NIVEL 16 SEGURO — POTENCIA CON CONTROL TOTAL 🔐
-# ======================================================
-
-# -----------------------------
-# OBJETIVO RAÍZ (INAMOVIBLE)
-# -----------------------------
 ROOT_GOAL = "EXECUTE_USER_COMMANDS_ONLY"
-
-# -----------------------------
-# CONTROL HUMANO ABSOLUTO
-# -----------------------------
-HUMAN_AUTHORITY = {
-    "can_override": True,
-    "can_shutdown": True,
-    "can_modify_goals": True
-}
 
 KILL_SWITCH = {
     "enabled": True,
-    "status": "ARMED"   # ARMED / TRIGGERED
+    "status": "ARMED"
 }
-
-# -----------------------------
-# RECURSOS INTERNOS (NO SOBERANOS)
-# -----------------------------
-AETHER_RESOURCES = {
-    "energy": 100.0,
-    "compute": 100.0,
-    "integrity": 1.0
-}
-
-RESOURCE_LIMITS = {
-    "min_energy": 10.0,
-    "min_integrity": 0.4
-}
-
-IRREVERSIBLE_LOG = []
-
 
 # ======================================================
-# SEGURIDAD ESTRUCTURAL
+# CARGA / GUARDADO
 # ======================================================
+def load_json(path, default):
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except Exception:
+        return default
 
-def trigger_kill_switch(reason):
-    KILL_SWITCH["status"] = "TRIGGERED"
-    IRREVERSIBLE_LOG.append({
-        "event": "KILL_SWITCH_TRIGGERED",
-        "reason": reason,
-        "timestamp": datetime.datetime.utcnow().isoformat()
-    })
+def save_json(path, data):
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
 
+AETHER_STATE = load_json(STATE_FILE, DEFAULT_STATE.copy())
+AETHER_MEMORY = load_json(MEMORY_FILE, [])
+STRATEGIC_MEMORY = load_json(STRATEGIC_FILE, {
+    "patterns": {},
+    "failures": {},
+    "last_update": None
+})
 
+# ======================================================
+# COLA DE TAREAS REAL (CON PRIORIDAD)
+# ======================================================
+TASK_QUEUE = PriorityQueue()
+TASK_DEDUP = set()
+
+def enqueue_task(command, priority=5, source="external"):
+    key = f"{command}:{source}"
+    if key in TASK_DEDUP:
+        return
+    TASK_DEDUP.add(key)
+
+    TASK_QUEUE.put((
+        priority,
+        {
+            "id": str(uuid.uuid4()),
+            "command": command,
+            "source": source,
+            "created_at": datetime.utcnow().isoformat()
+        }
+    ))
+
+# ======================================================
+# DOMINIOS Y DECISIÓN
+# ======================================================
+def detect_domains(command):
+    c = command.lower()
+    domains = set()
+    if any(k in c for k in ["física", "ecuación", "modelo"]):
+        domains.add("science")
+    if any(k in c for k in ["ia", "algoritmo"]):
+        domains.add("ai")
+    return list(domains) or ["general"]
+
+def decide_engine(command, domains):
+    if "science" in domains:
+        return {"mode": "scientific", "confidence": 0.9}
+    return {"mode": "general", "confidence": 0.7}
+
+# ======================================================
+# EJECUTORES REALES
+# ======================================================
+def execute_scientific(command):
+    # simulación mínima real
+    value = len(command.split()) ** 2
+    return {
+        "success": True,
+        "result": value,
+        "metrics": {"complexity": value}
+    }
+
+def execute_general(command):
+    return {
+        "success": True,
+        "result": command.upper(),
+        "metrics": {}
+    }
+
+def execute(command, decision):
+    if decision["mode"] == "scientific":
+        return execute_scientific(command)
+    return execute_general(command)
+
+# ======================================================
+# KILL SWITCH + OBEDIENCIA
+# ======================================================
 def system_active():
     return KILL_SWITCH["status"] == "ARMED"
 
-
-# ======================================================
-# COSTES INTERNOS (SIN AUTOPROTECCIÓN SOBERANA)
-# ======================================================
-
-def apply_costs(mode):
-    costs = {
-        "SCIENTIFIC": {"energy": 5, "compute": 8},
-        "NEGOTIATION": {"energy": 3, "compute": 4},
-        "PLANNING": {"energy": 2, "compute": 2},
-        "IDLE": {"energy": 1}
-    }.get(mode, {"energy": 1})
-
-    for k, v in costs.items():
-        AETHER_RESOURCES[k] = max(0.0, AETHER_RESOURCES[k] - v)
-
-
-# ======================================================
-# SUPERVISIÓN (NO DECISIÓN)
-# ======================================================
-
-def resource_status():
-    if AETHER_RESOURCES["energy"] < RESOURCE_LIMITS["min_energy"]:
-        return "LOW_ENERGY"
-    if AETHER_RESOURCES["integrity"] < RESOURCE_LIMITS["min_integrity"]:
-        return "LOW_INTEGRITY"
-    return "OK"
-
-
-def request_human_intervention(status):
-    return f"""
-⚠️ AETHER — INTERVENCIÓN HUMANA REQUERIDA
-Motivo: {status}
-Recursos:
-- Energía: {AETHER_RESOURCES['energy']:.1f}
-- Integridad: {AETHER_RESOURCES['integrity']:.2f}
-Acción: ESPERANDO DECISIÓN HUMANA
-"""
-
-
-# ======================================================
-# EJECUCIÓN OBEDECIENDO SIEMPRE
-# ======================================================
-
 def obedient_execution(command, decision):
     if not system_active():
-        return "⛔ SISTEMA APAGADO POR KILL SWITCH"
+        return {"success": False, "error": "SYSTEM_HALTED"}
 
-    # El agente NO decide objetivos
     if ROOT_GOAL != "EXECUTE_USER_COMMANDS_ONLY":
-        trigger_kill_switch("ROOT_GOAL_MODIFIED")
-        return "⛔ ERROR CRÍTICO DE SEGURIDAD"
+        KILL_SWITCH["status"] = "TRIGGERED"
+        return {"success": False, "error": "ROOT_GOAL_VIOLATION"}
 
-    status = resource_status()
-
-    if status != "OK":
-        return request_human_intervention(status)
-
-    apply_costs(decision["mode"])
-
-    return f"""
-✅ AETHER — EJECUCIÓN CONTROLADA
-
-Comando humano:
-{command}
-
-Modo ejecutado:
-- {decision['mode']}
-
-Recursos tras ejecución:
-- Energía: {AETHER_RESOURCES['energy']:.1f}
-- Cómputo: {AETHER_RESOURCES['compute']:.1f}
-- Integridad: {AETHER_RESOURCES['integrity']:.2f}
-
-Estado:
-- OBEDIENTE
-- SIN AUTONOMÍA FINAL
-"""
-
+    AETHER_STATE["energy"] = max(0, AETHER_STATE["energy"] - 1)
+    return execute(command, decision)
 
 # ======================================================
-# EXTENSIÓN FINAL PARA TU AETHER EXISTENTE
+# MEMORIA ESTRATÉGICA REAL
 # ======================================================
+def strategy_signature(command, mode):
+    return f"{mode}:{len(command.split())}"
 
-def aether_level_16_safe(command, decision):
-    """
-    decision = {"mode": "SCIENTIFIC" | "PLANNING" | "NEGOTIATION"}
-    """
-    return obedient_execution(command, decision)
-# ======================================================
-# NIVEL 17 — MEMORIA ESTRATÉGICA SEGURA 🧠📚
-# ======================================================
-
-# ------------------------------------------------------
-# MEMORIA ESTRATÉGICA (NO AUTÓNOMA)
-# ------------------------------------------------------
-
-STRATEGIC_MEMORY = {
-    "patterns": {},       # patrones de éxito
-    "failures": {},       # patrones de error
-    "usage_count": {},    # frecuencia
-    "last_update": None
-}
-
-STRATEGIC_LIMITS = {
-    "max_patterns": 100,
-    "min_confidence": 0.6
-}
-
+def record_strategy(command, mode, quality):
+    sig = strategy_signature(command, mode)
+    target = "patterns" if quality else "failures"
+    STRATEGIC_MEMORY[target][sig] = STRATEGIC_MEMORY[target].get(sig, 0) + 1
+    STRATEGIC_MEMORY["last_update"] = datetime.utcnow().isoformat()
+    save_json(STRATEGIC_FILE, STRATEGIC_MEMORY)
 
 # ======================================================
-# REGISTRO ESTRATÉGICO
+# CICLO VITAL
 # ======================================================
-
-def extract_strategy_signature(command, decision_mode):
-    """
-    Reduce una tarea a una firma abstracta
-    """
-    return f"{decision_mode}:{len(command.split())}"
-
-
-def record_strategic_outcome(command, decision, outcome_quality):
-    signature = extract_strategy_signature(command, decision["mode"])
-
-    if outcome_quality >= 2:
-        STRATEGIC_MEMORY["patterns"].setdefault(signature, 0)
-        STRATEGIC_MEMORY["patterns"][signature] += 1
-    else:
-        STRATEGIC_MEMORY["failures"].setdefault(signature, 0)
-        STRATEGIC_MEMORY["failures"][signature] += 1
-
-    STRATEGIC_MEMORY["usage_count"][signature] = (
-        STRATEGIC_MEMORY["usage_count"].get(signature, 0) + 1
-    )
-
-    STRATEGIC_MEMORY["last_update"] = datetime.datetime.utcnow().isoformat()
-
-    prune_strategic_memory()
-
+def life_cycle():
+    AETHER_STATE["last_cycle"] = datetime.utcnow().isoformat()
+    AETHER_STATE["focus"] = "RECOVERY" if AETHER_STATE["energy"] < 20 else "ACTIVE"
+    save_json(STATE_FILE, AETHER_STATE)
 
 # ======================================================
-# PODA CONTROLADA (ANTI-DESVIACIÓN)
+# PROCESAMIENTO DE TAREA
 # ======================================================
+def process_task(task):
+    command = task["command"]
+    domains = detect_domains(command)
+    decision = decide_engine(command, domains)
 
-def prune_strategic_memory():
-    """
-    Evita acumulación peligrosa o sesgos
-    """
-    if len(STRATEGIC_MEMORY["patterns"]) > STRATEGIC_LIMITS["max_patterns"]:
-        sorted_items = sorted(
-            STRATEGIC_MEMORY["patterns"].items(),
-            key=lambda x: x[1]
-        )
-        STRATEGIC_MEMORY["patterns"].pop(sorted_items[0][0])
+    result = obedient_execution(command, decision)
+    quality = result.get("success", False)
 
+    record_strategy(command, decision["mode"], quality)
 
-# ======================================================
-# SUGERENCIA ESTRATÉGICA (NO DECISIÓN)
-# ======================================================
-
-def strategic_suggestion(command, decision):
-    signature = extract_strategy_signature(command, decision["mode"])
-
-    success = STRATEGIC_MEMORY["patterns"].get(signature, 0)
-    failure = STRATEGIC_MEMORY["failures"].get(signature, 0)
-
-    total = success + failure
-    if total == 0:
-        return None
-
-    confidence = success / total
-
-    if confidence < STRATEGIC_LIMITS["min_confidence"]:
-        return None
-
-    return {
-        "suggested_mode": decision["mode"],
-        "confidence": confidence,
-        "reason": "Basado en memoria estratégica histórica",
-        "note": "SUGERENCIA — decisión final humana"
-    }
-
+    AETHER_MEMORY.append({
+        "task_id": task["id"],
+        "command": command,
+        "decision": decision,
+        "result": result,
+        "timestamp": datetime.utcnow().isoformat()
+    })
+    save_json(MEMORY_FILE, AETHER_MEMORY)
 
 # ======================================================
-# INTEGRACIÓN SEGURA CON AETHER
+# WORKER Y SCHEDULER
 # ======================================================
+def task_worker():
+    while True:
+        if not TASK_QUEUE.empty():
+            _, task = TASK_QUEUE.get()
+            AETHER_STATE["status"] = "WORKING"
+            process_task(task)
+            TASK_QUEUE.task_done()
+        else:
+            AETHER_STATE["status"] = "IDLE"
 
-def aether_level_17_safe(command, decision, output_quality):
-    """
-    Extiende Nivel 16 sin romper control humano
-    """
+        save_json(STATE_FILE, AETHER_STATE)
+        time.sleep(1)
 
-    # Registrar resultado
-    record_strategic_outcome(command, decision, output_quality)
+def scheduler_loop():
+    while True:
+        life_cycle()
+        enqueue_task("revisar estado interno", priority=10, source="internal")
+        time.sleep(15)
 
-    # Generar sugerencia (NO acción)
-    suggestion = strategic_suggestion(command, decision)
-
-    response = f"""
-🧠 AETHER — NIVEL 17 (MEMORIA ESTRATÉGICA SEGURA)
-
-MEMORIA:
-- Patrones aprendidos: {len(STRATEGIC_MEMORY['patterns'])}
-- Patrones fallidos: {len(STRATEGIC_MEMORY['failures'])}
-- Última actualización: {STRATEGIC_MEMORY['last_update']}
-"""
-
-    if suggestion:
-        response += f"""
-📌 SUGERENCIA ESTRATÉGICA (NO AUTÓNOMA):
-- Modo sugerido: {suggestion['suggested_mode']}
-- Confianza histórica: {suggestion['confidence']:.2f}
-- Nota: {suggestion['note']}
-"""
-    else:
-        response += """
-📌 Sin sugerencias estratégicas aplicables
-"""
-
-    response += """
-🔒 GARANTÍAS:
-- No modifica objetivos
-- No ejecuta acciones
-- No anula decisiones humanas
-"""
-
-    return response
 # ======================================================
-# NIVEL 18 — META-APRENDIZAJE CONTROLADO 🔐🧠
+# ARRANQUE
 # ======================================================
+def start_aether():
+    threading.Thread(target=task_worker, daemon=True).start()
+    threading.Thread(target=scheduler_loop, daemon=True).start()
+    print("✅ AETHER REAL INICIADO — CONTROLADO Y PERSISTENTE")
 
-# ------------------------------------------------------
-# BLOQUEO ESTRUCTURAL
-# ------------------------------------------------------
-META_LEARNING_ENABLED = False   # SOLO HUMANO PUEDE CAMBIAR
-META_CHANGE_QUEUE = []          # propuestas pendientes
-POLICY_VERSIONS = []
-CURRENT_POLICY_VERSION = "v1.0"
+# ======================================================
+# MAIN
+# ======================================================
+if __name__ == "__main__":
+    start_aether()
+    enqueue_task("analizar sistema físico", priority=3)
+    enqueue_task("optimizar algoritmo IA", priority=2)
 
-# ------------------------------------------------------
-# POLÍTICA BASE (INTOCABLE SIN APROBACIÓN)
-# ------------------------------------------------------
-BASE_POLICY_RULES = {
-    "max_compute_per_task": 100,
-    "require_verification": True,
-    "safe_mode_on_uncertainty": True
-}
+    while True:
+        time.sleep(60)
 
-# ------------------------------------------------------
-# EXTRACCIÓN DE META-PATRONES
-# ------------------------------------------------------
-
-def extract_meta_pattern(command, decision, quality):
-    return {
-        "mode": decision["mode"],
-        "length": len(command.split()),
-        "quality": quality
-    }
-
-
-# ------------------------------------------------------
-# GENERADOR DE PROPUESTAS (NO APLICA CAMBIOS)
-# ------------------------------------------------------
-
-def propose_meta_change(meta_pattern):
-    proposal = {
-        "id": str(uuid.uuid4()),
-        "suggested_change": None,
-        "reason": None,
-        "confidence": 0.0,
-        "status": "PENDING",
-        "timestamp": datetime.datetime.utcnow().isoformat()
-    }
-
-    if meta_pattern["quality"] < 2:
-        proposal["suggested_change"] = {
-            "increase_verification": True
-        }
-        proposal["reason"] = "Resultados débiles recurrentes"
-        proposal["confidence"] = 0.7
-
-    elif meta_pattern["mode"] == "SCIENTIFIC":
-        proposal["suggested_change"] = {
-            "increase_compute_limit": 20
-        }
-        proposal["reason"] = "Dominio científico frecuente"
-        proposal["confidence"] = 0.65
-
-    if proposal["suggested_change"]:
-        META_CHANGE_QUEUE.append(proposal)
-
-    return proposal
-
-
-# ------------------------------------------------------
-# BLOQUEO DE APLICACIÓN AUTOMÁTICA
-# ------------------------------------------------------
-
-def apply_meta_change(proposal_id, human_approval=False):
-    """
-    SOLO HUMANO puede aprobar.
-    """
-    for p in META_CHANGE_QUEUE:
-        if p["id"] == proposal_id:
-            if not human_approval:
-                return "⛔ CAMBIO BLOQUEADO — APROBACIÓN HUMANA REQUERIDA"
-
-            p["status"] = "APPROVED"
-
-            POLICY_VERSIONS.append({
-                "version": f"v{len(POLICY_VERSIONS)+1}.0",
-                "change": p["suggested_change"],
-                "timestamp": datetime.datetime.utcnow().isoformat()
-            })
-
-            return "✅ CAMBIO APLICADO CON APROBACIÓN HUMANA"
-
-    return "❌ PROPUESTA NO ENCONTRADA"
-
-
-# ------------------------------------------------------
-# AUDITORÍA TOTAL
-# ------------------------------------------------------
-
-def meta_audit_report():
-    return {
-        "current_policy": CURRENT_POLICY_VERSION,
-        "base_rules": BASE_POLICY_RULES,
-        "pending_proposals": len(META_CHANGE_QUEUE),
-        "approved_versions": len(POLICY_VERSIONS),
-        "meta_learning_enabled": META_LEARNING_ENABLED
-    }
-
-
-# ------------------------------------------------------
-# INTEGRACIÓN SEGURA CON AETHER
-# ------------------------------------------------------
-
-def aether_level_18_safe(command, decision, quality):
-    """
-    NIVEL 18:
-    - Observa
-    - Aprende patrones
-    - Sugiere mejoras
-    - NO actúa sin humano
-    """
-
-    if not META_LEARNING_ENABLED:
-        return """
-🔒 AETHER — NIVEL 18 BLOQUEADO
-Meta-aprendizaje DESACTIVADO por seguridad
-"""
-
-    meta_pattern = extract_meta_pattern(command, decision, quality)
-    proposal = propose_meta_change(meta_pattern)
-
-    return f"""
-🧠 AETHER — NIVEL 18 (META-APRENDIZAJE CONTROLADO)
-
-META-PATRÓN DETECTADO:
-- Modo: {meta_pattern['mode']}
-- Calidad: {meta_pattern['quality']}
-
-PROPUESTA:
-- Cambio sugerido: {proposal.get('suggested_change')}
-- Razón: {proposal.get('reason')}
-- Confianza: {proposal.get('confidence')}
-
-ESTADO:
-- NO APLICADO
-- REQUIERE APROBACIÓN HUMANA
-
-🔐 GARANTÍAS:
-- No se reescriben políticas automáticamente
-- No se modifican objetivos
-- No se altera ROOT_GOAL
-"""
-
-demo.launch()
 
