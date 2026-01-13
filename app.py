@@ -1,5 +1,5 @@
 # ======================================================
-# AETHER CORE — VERSIÓN PRO DEFINITIVA + THREAD-SAFE
+# AETHER CORE — VERSIÓN PRO TOTAL + MÓDULOS IA EN CALIENTE
 # ======================================================
 
 import time
@@ -10,17 +10,21 @@ from queue import PriorityQueue
 from datetime import datetime
 import numpy as np
 import os
+import importlib
+import importlib.util
 
 # ======================================================
 # VERSIONADO Y ARCHIVOS
 # ======================================================
-AETHER_VERSION = "3.2.1-pro"
+AETHER_VERSION = "3.4.0-pro-total"
 
 STATE_FILE = "aether_state.json"
 MEMORY_FILE = "aether_memory.json"
 STRATEGIC_FILE = "aether_strategic.json"
 LOG_FILE = "aether_log.json"
 DASHBOARD_FILE = "aether_dashboard.json"
+
+MODULES_DIR = "modules"  # carpeta de módulos IA externos
 
 MAX_MEMORY_ENTRIES = 500
 MAX_LOG_ENTRIES = 1000
@@ -42,13 +46,17 @@ ROOT_GOAL = "EXECUTE_USER_COMMANDS_ONLY"
 KILL_SWITCH = {"enabled": True, "status": "ARMED"}
 
 # ======================================================
-# CARGA / GUARDADO CON THREAD-SAFE Y ATOMICIDAD
+# BLOQUEOS PARA THREAD-SAFE
 # ======================================================
 memory_lock = threading.Lock()
 log_lock = threading.Lock()
 state_lock = threading.Lock()
 strategic_lock = threading.Lock()
+modules_lock = threading.Lock()
 
+# ======================================================
+# FUNCIONES DE CARGA / GUARDADO
+# ======================================================
 def load_json(path, default):
     try:
         with open(path, "r") as f:
@@ -88,9 +96,10 @@ AETHER_STATE = load_json(STATE_FILE, DEFAULT_STATE.copy())
 AETHER_MEMORY = load_json(MEMORY_FILE, [])
 STRATEGIC_MEMORY = load_json(STRATEGIC_FILE, {"patterns": {}, "failures": {}, "history": [], "last_update": None})
 AETHER_LOGS = load_json(LOG_FILE, [])
+LOADED_MODULES = {}
 
 # ======================================================
-# UTILIDADES LOGS Y DASHBOARD
+# LOGS Y DASHBOARD
 # ======================================================
 def log_event(event_type, info):
     entry = {"timestamp": datetime.utcnow().isoformat(), "type": event_type, "info": info}
@@ -111,7 +120,7 @@ def update_dashboard():
     save_json_atomic(DASHBOARD_FILE, dashboard)
 
 # ======================================================
-# COLA DE TAREAS CON PRIORIDAD DINÁMICA
+# COLA DE TAREAS
 # ======================================================
 TASK_QUEUE = PriorityQueue()
 TASK_DEDUP = set()
@@ -141,11 +150,15 @@ def detect_domains(command):
         domains.add("science")
     if any(k in c for k in ["ia", "algoritmo"]):
         domains.add("ai")
+    if any(k in c for k in ["imagen", "video", "audio"]):
+        domains.add("multimedia")
     return list(domains) or ["general"]
 
 def decide_engine(command, domains):
     if "science" in domains:
         return {"mode": "scientific", "confidence": 0.9}
+    elif "ai" in domains:
+        return {"mode": "ai_module", "confidence": 0.95}
     return {"mode": "general", "confidence": 0.7}
 
 # ======================================================
@@ -170,9 +183,35 @@ def execute_general(command):
     except Exception as e:
         return {"success": False, "error": str(e)}
 
+def reload_ai_modules():
+    with modules_lock:
+        global LOADED_MODULES
+        LOADED_MODULES = {}
+        if not os.path.exists(MODULES_DIR):
+            os.mkdir(MODULES_DIR)
+        for filename in os.listdir(MODULES_DIR):
+            if filename.endswith(".py"):
+                mod_name = filename[:-3]
+                path = os.path.join(MODULES_DIR, filename)
+                spec = importlib.util.spec_from_file_location(mod_name, path)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                LOADED_MODULES[mod_name] = mod
+        log_event("MODULES_RELOADED", {"modules": list(LOADED_MODULES.keys())})
+
+def execute_ai_module(command):
+    with modules_lock:
+        for mod_name, mod in LOADED_MODULES.items():
+            if hasattr(mod, "can_handle") and mod.can_handle(command):
+                result = mod.run(command)
+                return {"success": True, "result": result, "module": mod_name}
+    return {"success": False, "error": "No suitable AI module found"}
+
 def execute(command, decision):
     if decision["mode"] == "scientific":
         return execute_scientific(command)
+    elif decision["mode"] == "ai_module":
+        return execute_ai_module(command)
     return execute_general(command)
 
 # ======================================================
@@ -278,9 +317,12 @@ def scheduler_loop():
 # ARRANQUE
 # ======================================================
 def start_aether():
+    if not os.path.exists(MODULES_DIR):
+        os.mkdir(MODULES_DIR)
+    reload_ai_modules()  # cargar módulos IA al inicio
     threading.Thread(target=task_worker, daemon=True).start()
     threading.Thread(target=scheduler_loop, daemon=True).start()
-    print("✅ AETHER PRO FINAL INICIADO — CONTROLADO Y MONITOREADO")
+    print("✅ AETHER PRO TOTAL INICIADO — MÓDULOS IA HOT-LOADED, CONTROLADO Y MONITOREADO")
 
 # ======================================================
 # MAIN
@@ -291,5 +333,3 @@ if __name__ == "__main__":
     enqueue_task("optimizar algoritmo IA", priority=2)
     while True:
         time.sleep(60)
-
-
