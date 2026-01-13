@@ -695,6 +695,144 @@ def aether_level_16_safe(command, decision):
     decision = {"mode": "SCIENTIFIC" | "PLANNING" | "NEGOTIATION"}
     """
     return obedient_execution(command, decision)
+# ======================================================
+# NIVEL 17 — MEMORIA ESTRATÉGICA SEGURA 🧠📚
+# ======================================================
+
+# ------------------------------------------------------
+# MEMORIA ESTRATÉGICA (NO AUTÓNOMA)
+# ------------------------------------------------------
+
+STRATEGIC_MEMORY = {
+    "patterns": {},       # patrones de éxito
+    "failures": {},       # patrones de error
+    "usage_count": {},    # frecuencia
+    "last_update": None
+}
+
+STRATEGIC_LIMITS = {
+    "max_patterns": 100,
+    "min_confidence": 0.6
+}
+
+
+# ======================================================
+# REGISTRO ESTRATÉGICO
+# ======================================================
+
+def extract_strategy_signature(command, decision_mode):
+    """
+    Reduce una tarea a una firma abstracta
+    """
+    return f"{decision_mode}:{len(command.split())}"
+
+
+def record_strategic_outcome(command, decision, outcome_quality):
+    signature = extract_strategy_signature(command, decision["mode"])
+
+    if outcome_quality >= 2:
+        STRATEGIC_MEMORY["patterns"].setdefault(signature, 0)
+        STRATEGIC_MEMORY["patterns"][signature] += 1
+    else:
+        STRATEGIC_MEMORY["failures"].setdefault(signature, 0)
+        STRATEGIC_MEMORY["failures"][signature] += 1
+
+    STRATEGIC_MEMORY["usage_count"][signature] = (
+        STRATEGIC_MEMORY["usage_count"].get(signature, 0) + 1
+    )
+
+    STRATEGIC_MEMORY["last_update"] = datetime.datetime.utcnow().isoformat()
+
+    prune_strategic_memory()
+
+
+# ======================================================
+# PODA CONTROLADA (ANTI-DESVIACIÓN)
+# ======================================================
+
+def prune_strategic_memory():
+    """
+    Evita acumulación peligrosa o sesgos
+    """
+    if len(STRATEGIC_MEMORY["patterns"]) > STRATEGIC_LIMITS["max_patterns"]:
+        sorted_items = sorted(
+            STRATEGIC_MEMORY["patterns"].items(),
+            key=lambda x: x[1]
+        )
+        STRATEGIC_MEMORY["patterns"].pop(sorted_items[0][0])
+
+
+# ======================================================
+# SUGERENCIA ESTRATÉGICA (NO DECISIÓN)
+# ======================================================
+
+def strategic_suggestion(command, decision):
+    signature = extract_strategy_signature(command, decision["mode"])
+
+    success = STRATEGIC_MEMORY["patterns"].get(signature, 0)
+    failure = STRATEGIC_MEMORY["failures"].get(signature, 0)
+
+    total = success + failure
+    if total == 0:
+        return None
+
+    confidence = success / total
+
+    if confidence < STRATEGIC_LIMITS["min_confidence"]:
+        return None
+
+    return {
+        "suggested_mode": decision["mode"],
+        "confidence": confidence,
+        "reason": "Basado en memoria estratégica histórica",
+        "note": "SUGERENCIA — decisión final humana"
+    }
+
+
+# ======================================================
+# INTEGRACIÓN SEGURA CON AETHER
+# ======================================================
+
+def aether_level_17_safe(command, decision, output_quality):
+    """
+    Extiende Nivel 16 sin romper control humano
+    """
+
+    # Registrar resultado
+    record_strategic_outcome(command, decision, output_quality)
+
+    # Generar sugerencia (NO acción)
+    suggestion = strategic_suggestion(command, decision)
+
+    response = f"""
+🧠 AETHER — NIVEL 17 (MEMORIA ESTRATÉGICA SEGURA)
+
+MEMORIA:
+- Patrones aprendidos: {len(STRATEGIC_MEMORY['patterns'])}
+- Patrones fallidos: {len(STRATEGIC_MEMORY['failures'])}
+- Última actualización: {STRATEGIC_MEMORY['last_update']}
+"""
+
+    if suggestion:
+        response += f"""
+📌 SUGERENCIA ESTRATÉGICA (NO AUTÓNOMA):
+- Modo sugerido: {suggestion['suggested_mode']}
+- Confianza histórica: {suggestion['confidence']:.2f}
+- Nota: {suggestion['note']}
+"""
+    else:
+        response += """
+📌 Sin sugerencias estratégicas aplicables
+"""
+
+    response += """
+🔒 GARANTÍAS:
+- No modifica objetivos
+- No ejecuta acciones
+- No anula decisiones humanas
+"""
+
+    return response
 
 demo.launch()
 
