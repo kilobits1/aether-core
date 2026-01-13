@@ -2,3 +2,4 @@ gradio
 firebase-admin
 fpdf
 numpy
+ezdxf
