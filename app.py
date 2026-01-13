@@ -8,6 +8,7 @@ import uuid
 import threading
 from queue import PriorityQueue
 from datetime import datetime
+import numpy as np  # agregado para simulación científica real
 
 # ======================================================
 # VERSIONADO Y ARCHIVOS
@@ -103,12 +104,28 @@ def decide_engine(command, domains):
 # EJECUTORES REALES
 # ======================================================
 def execute_scientific(command):
-    # simulación mínima real
-    value = len(command.split()) ** 2
+    # simulación física mínima real con numpy
+    t = np.linspace(0, 10, 200)
+    a = 2.0
+    v0 = 1.0
+    x0 = 0.0
+
+    v = v0 + a * t
+    x = x0 + v0 * t + 0.5 * a * t**2
+
+    stability = float(np.std(x))
+    final_position = float(x[-1])
+
     return {
         "success": True,
-        "result": value,
-        "metrics": {"complexity": value}
+        "result": {
+            "final_position": final_position,
+            "stability": stability
+        },
+        "metrics": {
+            "samples": len(t),
+            "acceleration": a
+        }
     }
 
 def execute_general(command):
@@ -162,15 +179,38 @@ def life_cycle():
     save_json(STATE_FILE, AETHER_STATE)
 
 # ======================================================
+# PLANIFICADOR MULTI-PASO
+# ======================================================
+def decompose_command(command, decision):
+    steps = []
+    if decision["mode"] == "scientific":
+        steps = [
+            "preparar simulación",
+            "ejecutar simulación",
+            "analizar resultados"
+        ]
+    else:
+        steps = [
+            "analizar solicitud",
+            "generar respuesta"
+        ]
+    return steps
+
+# ======================================================
 # PROCESAMIENTO DE TAREA
 # ======================================================
 def process_task(task):
     command = task["command"]
     domains = detect_domains(command)
     decision = decide_engine(command, domains)
+    steps = decompose_command(command, decision)
 
-    result = obedient_execution(command, decision)
-    quality = result.get("success", False)
+    step_results = []
+    for step in steps:
+        r = obedient_execution(f"{command} :: {step}", decision)
+        step_results.append(r)
+
+    quality = all(r.get("success") for r in step_results)
 
     record_strategy(command, decision["mode"], quality)
 
@@ -178,7 +218,8 @@ def process_task(task):
         "task_id": task["id"],
         "command": command,
         "decision": decision,
-        "result": result,
+        "steps": steps,
+        "results": step_results,
         "timestamp": datetime.utcnow().isoformat()
     })
     save_json(MEMORY_FILE, AETHER_MEMORY)
