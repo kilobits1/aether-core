@@ -1,16 +1,16 @@
-# task_store.py
+# plugins/task_store.py
 import os
 import json
 import sqlite3
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 class TaskStore:
     """
-    Cola persistente SQLite (HF-safe).
+    Cola persistente SQLite.
     Estados: queued, running, success, failed, retry_scheduled, canceled
     """
     def __init__(self, db_path: str):
@@ -84,13 +84,9 @@ class TaskStore:
             con.close()
 
     def fetch_next_runnable(self, worker_id: str) -> Optional[Dict[str, Any]]:
-        """
-        Reclama una tarea de forma atómica (best-effort con transacción).
-        Considera status queued o retry_scheduled y run_after <= now.
-        """
         now = utc_now_iso()
         con = self._connect()
-        con.isolation_level = None  # manual transactions
+        con.isolation_level = None
         try:
             con.execute("BEGIN IMMEDIATE;")
             row = con.execute(
@@ -121,6 +117,7 @@ class TaskStore:
             )
             changed = con.total_changes
             con.execute("COMMIT;")
+
             if changed == 0:
                 return None
 
@@ -142,19 +139,20 @@ class TaskStore:
         finally:
             con.close()
 
-    def heartbeat_running(self, task_id: str, worker_id: str) -> None:
-        now = utc_now_iso()
+    def increment_attempt(self, task_id: str, worker_id: str) -> int:
         con = self._connect()
         try:
             con.execute(
                 """
                 UPDATE tasks
-                SET updated_at=?
+                SET attempt = attempt + 1, updated_at=?
                 WHERE id=? AND locked_by=? AND status='running'
                 """,
-                (now, task_id, worker_id),
+                (utc_now_iso(), task_id, worker_id),
             )
             con.commit()
+            row = con.execute("SELECT attempt FROM tasks WHERE id=?", (task_id,)).fetchone()
+            return int(row[0]) if row else 0
         finally:
             con.close()
 
@@ -206,26 +204,6 @@ class TaskStore:
                 (next_run_after, json.dumps(error), now, task_id, worker_id),
             )
             con.commit()
-        finally:
-            con.close()
-
-    def increment_attempt(self, task_id: str, worker_id: str) -> int:
-        """
-        Incrementa attempt mientras está running. Devuelve attempt nuevo.
-        """
-        con = self._connect()
-        try:
-            con.execute(
-                """
-                UPDATE tasks
-                SET attempt = attempt + 1, updated_at=?
-                WHERE id=? AND locked_by=? AND status='running'
-                """,
-                (utc_now_iso(), task_id, worker_id),
-            )
-            con.commit()
-            row = con.execute("SELECT attempt FROM tasks WHERE id=?", (task_id,)).fetchone()
-            return int(row[0]) if row else 0
         finally:
             con.close()
 
