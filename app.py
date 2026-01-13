@@ -479,7 +479,8 @@ def chat_send(message, history):
     reply = format_reply(decision, result)
 
     history = history or []
-    history.append((message, reply))
+    history.append((message, reply))  # 👈 TUPLA, NO dict
+
     return history, ""
 
 # -----------------------------
@@ -491,7 +492,7 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420)  # SIN type=
+    chat = gr.Chatbot(label="AETHER Chat", height=420)
     user_msg = gr.Textbox(label="Escribe aquí", placeholder="Ej: hola aether / optimizar algoritmo IA", lines=2)
 
     with gr.Row():
