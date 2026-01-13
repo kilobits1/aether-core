@@ -1,10 +1,12 @@
 # ======================================================
-# AETHER CORE — HF SPACES FIXED (PRO TOTAL) + CHAT (GRADIO "messages" DEFAULT)
-#   CORREGIDO: loader *_ai.py + plugins can_handle/run + decide_engine por plugins
-#   CORREGIDO: FastAPI + Gradio:
-#       - /api/* = API (incluye /api/health)
-#       - /ui    = Gradio UI
-#       - /      = redirect a /ui (HF no muestra Not Found)
+# AETHER CORE — PRO TOTAL (HF SPACES) + CHAT "messages" (GRADIO 4/5)
+# Mejoras clave (las que te estaban causando UI “vacía”):
+#   1) Chatbot con type="messages" (historial dicts role/content real)
+#   2) Demo snapshot demo1 auto-creado al boot (ya no falla "Snapshot no existe")
+#   3) DEDUP inteligente: permite tareas internas repetidas (scheduler) sin bloquearse
+#   4) Botón Enqueue no usa el textbox del chat (no se pisa ni se limpia raro)
+#   5) Worker procesa el comando REAL (sin " :: step" que rompía plugins)
+#   6) Status/Logs robustos (no revienta si JSON corrupto / archivos vacíos)
 # ======================================================
 
 import os
@@ -35,7 +37,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # -----------------------------
 # VERSIONADO Y ARCHIVOS
 # -----------------------------
-AETHER_VERSION = "3.4.5-pro-total-hf-chat-messages"
+AETHER_VERSION = "3.4.6-pro-total-hf-chat-messages-fixed-ui"
 
 STATE_FILE = os.path.join(DATA_DIR, "aether_state.json")
 MEMORY_FILE = os.path.join(DATA_DIR, "aether_memory.json")
@@ -43,12 +45,18 @@ STRATEGIC_FILE = os.path.join(DATA_DIR, "aether_strategic.json")
 LOG_FILE = os.path.join(DATA_DIR, "aether_log.json")
 DASHBOARD_FILE = os.path.join(DATA_DIR, "aether_dashboard.json")
 
+# demo snapshots (simple)
+DEMO1_FILE = os.path.join(DATA_DIR, "demo1.json")
+
 MODULES_DIR = "plugins"  # dentro del repo
 os.makedirs(MODULES_DIR, exist_ok=True)
 
 MAX_MEMORY_ENTRIES = 500
 MAX_LOG_ENTRIES = 1000
 MAX_STRATEGY_HISTORY = 1000
+
+# DEDUP control (evita que crezca infinito)
+MAX_DEDUP_KEYS = 5000
 
 # -----------------------------
 # ESTADO GLOBAL
@@ -74,14 +82,20 @@ log_lock = threading.Lock()
 state_lock = threading.Lock()
 strategic_lock = threading.Lock()
 modules_lock = threading.Lock()
+dedup_lock = threading.Lock()
 
 # -----------------------------
-# JSON IO (atómico)
+# JSON IO (robusto + atómico)
 # -----------------------------
 def load_json(path, default):
     try:
+        if not os.path.exists(path):
+            return default
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            txt = f.read().strip()
+            if not txt:
+                return default
+            return json.loads(txt)
     except Exception:
         return default
 
@@ -102,6 +116,36 @@ STRATEGIC_MEMORY = load_json(
 )
 AETHER_LOGS = load_json(LOG_FILE, [])
 LOADED_MODULES = {}
+
+# -----------------------------
+# DEMO SNAPSHOTS (auto-creación)
+# -----------------------------
+def ensure_demo1():
+    if os.path.exists(DEMO1_FILE):
+        return True
+    try:
+        save_json_atomic(
+            DEMO1_FILE,
+            {
+                "name": "demo1",
+                "created_at": safe_now(),
+                "events": [],
+                "notes": "Snapshot inicial auto-creado al boot",
+            },
+        )
+        return True
+    except Exception:
+        return False
+
+def export_demo1():
+    # Export simple (lo devuelves como JSON string en UI)
+    try:
+        if not os.path.exists(DEMO1_FILE):
+            ensure_demo1()
+        payload = load_json(DEMO1_FILE, {"ok": False, "error": "demo1_missing"})
+        return json.dumps({"ok": True, "demo": payload}, indent=2, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps({"ok": False, "error": str(e)}, indent=2, ensure_ascii=False)
 
 # -----------------------------
 # LOGS + DASHBOARD
@@ -125,6 +169,7 @@ def update_dashboard():
         "last_cycle": snap.get("last_cycle"),
         "version": AETHER_VERSION,
         "data_dir": DATA_DIR,
+        "modules_loaded": len(LOADED_MODULES),
     }
     save_json_atomic(DASHBOARD_FILE, dash)
 
@@ -132,23 +177,42 @@ def update_dashboard():
 # COLA DE TAREAS
 # -----------------------------
 TASK_QUEUE = PriorityQueue()
-TASK_DEDUP = set()
+TASK_DEDUP = []  # guardamos en lista para poder recortar
+TASK_DEDUP_SET = set()
+
+def _dedup_prune_if_needed():
+    # recorta para no crecer infinito
+    with dedup_lock:
+        if len(TASK_DEDUP) <= MAX_DEDUP_KEYS:
+            return
+        cut = int(MAX_DEDUP_KEYS * 0.7)
+        old = TASK_DEDUP[:-cut]
+        TASK_DEDUP[:] = TASK_DEDUP[-cut:]
+        for k in old:
+            TASK_DEDUP_SET.discard(k)
 
 def compute_priority(base):
     with state_lock:
         e = int(AETHER_STATE.get("energy", 0))
-    return base + 5 if e < 20 else base
+    # Nota: slider 1=alta, 20=baja -> prioridad interna: menor número = más urgente
+    # Ajuste simple: si energía baja, empeora prioridad (sube número)
+    return base + (3 if e < 20 else 0)
 
 def enqueue_task(command, priority=5, source="external"):
     command = (command or "").strip()
     if not command:
         return False
 
-    key = f"{command}:{source}"
-    if key in TASK_DEDUP:
-        return False
+    # DEDUP: para internal permitimos repetición (scheduler necesita correr siempre)
+    if source != "internal":
+        key = f"{command}:{source}"
+        with dedup_lock:
+            if key in TASK_DEDUP_SET:
+                return False
+            TASK_DEDUP_SET.add(key)
+            TASK_DEDUP.append(key)
+        _dedup_prune_if_needed()
 
-    TASK_DEDUP.add(key)
     dyn = compute_priority(int(priority))
     TASK_QUEUE.put(
         (
@@ -172,15 +236,12 @@ def detect_domains(command):
     c = (command or "").lower()
     d = set()
 
-    # ciencia
     if any(k in c for k in ["física", "ecuación", "modelo", "simulación", "simular"]):
         d.add("science")
 
-    # comandos / plugins (clave para "task a" y "reload plugins")
     if c.startswith("task ") or "reload" in c or "plugin" in c or "plugins" in c or "modulos" in c or "módulos" in c:
         d.add("ai")
 
-    # texto común
     if any(k in c for k in ["ia", "algoritmo", "llm", "embedding", "hola", "hello"]):
         d.add("ai")
 
@@ -201,7 +262,6 @@ def _any_module_can_handle(command: str) -> bool:
     return False
 
 def decide_engine(command, domains):
-    # Si cualquier plugin lo puede manejar, SIEMPRE usa ai_module
     if _any_module_can_handle(command):
         return {"mode": "ai_module", "confidence": 0.99}
 
@@ -232,7 +292,7 @@ def execute_general(command):
     return {"success": True, "result": (command or "").upper()}
 
 # -----------------------------
-# MÓDULOS IA HOT-RELOAD (CORREGIDO)
+# MÓDULOS IA HOT-RELOAD
 # -----------------------------
 def reload_ai_modules():
     loaded = {}
@@ -242,7 +302,7 @@ def reload_ai_modules():
         if fn.startswith("_"):
             continue
 
-        name = fn[:-3]  # sin .py
+        name = fn[:-3]
         path = os.path.join(MODULES_DIR, fn)
 
         try:
@@ -266,6 +326,7 @@ def reload_ai_modules():
         LOADED_MODULES.update(loaded)
 
     log_event("MODULES_RELOADED", {"modules": list(LOADED_MODULES.keys())})
+    update_dashboard()
     return list(LOADED_MODULES.keys())
 
 def execute_ai_module(command):
@@ -330,10 +391,10 @@ def record_strategy(command, mode, success):
 def life_cycle():
     with state_lock:
         AETHER_STATE["last_cycle"] = safe_now()
-        AETHER_STATE["focus"] = "RECOVERY" if AETHER_STATE["energy"] < 20 else "ACTIVE"
+        AETHER_STATE["focus"] = "RECOVERY" if int(AETHER_STATE.get("energy", 0)) < 20 else "ACTIVE"
         save_json_atomic(STATE_FILE, AETHER_STATE)
     update_dashboard()
-    log_event("CYCLE", {"energy": AETHER_STATE["energy"], "focus": AETHER_STATE["focus"]})
+    log_event("CYCLE", {"energy": AETHER_STATE.get("energy", 0), "focus": AETHER_STATE.get("focus")})
 
 # -----------------------------
 # WORKER + SCHEDULER
@@ -346,11 +407,13 @@ def process_task(task):
     domains = detect_domains(command)
     decision = decide_engine(command, domains)
 
-    steps = ["analizar solicitud", "ejecutar", "validar"]
-    results = [obedient_execution(f"{command} :: {step}", decision) for step in steps]
+    # Ejecuta UNA vez el comando real (si quieres steps, que sea logging, no mutar el comando)
+    log_event("TASK_START", {"command": command, "mode": decision.get("mode"), "domains": domains})
 
-    success = all(r.get("success") for r in results)
-    record_strategy(command, decision["mode"], success)
+    result = obedient_execution(command, decision)
+    success = bool(result.get("success"))
+
+    record_strategy(command, decision.get("mode", "unknown"), success)
 
     with memory_lock:
         AETHER_MEMORY.append(
@@ -359,8 +422,9 @@ def process_task(task):
                 "command": command,
                 "domains": domains,
                 "decision": decision,
-                "results": results,
+                "results": [result],
                 "timestamp": safe_now(),
+                "source": task.get("source"),
             }
         )
         if len(AETHER_MEMORY) > MAX_MEMORY_ENTRIES:
@@ -385,7 +449,7 @@ def task_worker():
                     AETHER_STATE["status"] = "IDLE"
                     save_json_atomic(STATE_FILE, AETHER_STATE)
             update_dashboard()
-            time.sleep(1)
+            time.sleep(0.5)
         except Exception as e:
             log_event("WORKER_ERROR", {"error": str(e)})
             time.sleep(1)
@@ -394,6 +458,7 @@ def scheduler_loop():
     while not STOP_EVENT.is_set():
         try:
             life_cycle()
+            # internal se permite repetir
             enqueue_task("revisar estado interno", priority=10, source="internal")
             time.sleep(SCHEDULER_INTERVAL)
         except Exception as e:
@@ -411,7 +476,9 @@ def start_aether():
         return "AETHER ya estaba iniciado."
     _STARTED = True
 
+    ensure_demo1()
     reload_ai_modules()
+
     threading.Thread(target=task_worker, daemon=True).start()
     threading.Thread(target=scheduler_loop, daemon=True).start()
 
@@ -494,6 +561,7 @@ def ui_status():
             "modules": mods,
             "data_dir": DATA_DIR,
             "version": AETHER_VERSION,
+            "demo1_exists": os.path.exists(DEMO1_FILE),
         },
         indent=2,
         ensure_ascii=False,
@@ -508,13 +576,17 @@ def ui_reload_modules():
     return f"RELOADED={mods}\n\n" + ui_status()
 
 def ui_tail_logs(n=50):
+    try:
+        n = int(n)
+    except Exception:
+        n = 50
     with log_lock:
-        tail = AETHER_LOGS[-int(n):]
+        tail = AETHER_LOGS[-n:]
     return "\n".join(json.dumps(x, ensure_ascii=False) for x in tail)
 
-# ======================================================
-# CHATBOT: FORMATO "messages"
-# ======================================================
+# -----------------------------
+# CHATBOT: HISTORIAL "messages"
+# -----------------------------
 def _normalize_history_to_messages(history):
     if not history:
         return []
@@ -533,10 +605,10 @@ def _normalize_history_to_messages(history):
 
 def chat_send(message, history):
     message = (message or "").strip()
+    history = _normalize_history_to_messages(history)
+
     if not message:
         return history, ""
-
-    history = _normalize_history_to_messages(history)
 
     decision, result = run_now(message)
     reply = format_reply(decision, result)
@@ -555,18 +627,29 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420)
+    # IMPORTANTE: type="messages" evita el render “vacío” cuando pasas dicts
+    chat = gr.Chatbot(label="AETHER Chat", height=420, type="messages")
+
     user_msg = gr.Textbox(
-        label="Escribe aquí",
-        placeholder="Ej: hola aether / task a / task last / reload plugins",
+        label="Escribe aquí (Chat)",
+        placeholder="Ej: hola aether / reload plugins / task ...",
         lines=2,
     )
 
     with gr.Row():
         btn_send = gr.Button("Enviar (Chat)")
-        prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (cola) 1=alta")
-        btn_enqueue = gr.Button("Enqueue Task (cola)")
         btn_reload = gr.Button("Reload Modules")
+        btn_export_demo = gr.Button("Export demo1")
+
+    gr.Markdown("---")
+    gr.Markdown("### Cola de tareas (separado del chat)")
+    task_cmd = gr.Textbox(
+        label="Comando para cola",
+        placeholder="Ej: analizar logs / revisar estado interno / task a",
+        lines=1,
+    )
+    prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (1=alta · 20=baja)")
+    btn_enqueue = gr.Button("Enqueue Task (cola)")
 
     status = gr.Code(label="Status JSON", language="json")
 
@@ -574,9 +657,14 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     logs = gr.Textbox(label="Tail Logs", lines=12)
     btn_refresh_logs = gr.Button("Refresh Logs")
 
+    export_out = gr.Code(label="Export demo1", language="json")
+
     btn_send.click(fn=chat_send, inputs=[user_msg, chat], outputs=[chat, user_msg])
-    btn_enqueue.click(fn=ui_enqueue, inputs=[user_msg, prio], outputs=[status])
+
+    btn_enqueue.click(fn=ui_enqueue, inputs=[task_cmd, prio], outputs=[status])
     btn_reload.click(fn=ui_reload_modules, inputs=[], outputs=[status])
+
+    btn_export_demo.click(fn=export_demo1, inputs=[], outputs=[export_out])
 
     btn_refresh_logs.click(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
     logs_n.change(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
