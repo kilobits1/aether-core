@@ -1,6 +1,10 @@
 # ======================================================
 # AETHER CORE — HF SPACES FIXED (PRO TOTAL) + CHAT (GRADIO "messages" DEFAULT)
 #   CORREGIDO: loader *_ai.py + plugins can_handle/run + decide_engine por plugins
+#   CORREGIDO: FastAPI + Gradio:
+#       - /api/* = API (incluye /api/health)
+#       - /ui    = Gradio UI
+#       - /      = redirect a /ui (HF no muestra Not Found)
 # ======================================================
 
 import os
@@ -176,7 +180,7 @@ def detect_domains(command):
     if c.startswith("task ") or "reload" in c or "plugin" in c or "plugins" in c or "modulos" in c or "módulos" in c:
         d.add("ai")
 
-    # texto común (mantiene tu comportamiento previo)
+    # texto común
     if any(k in c for k in ["ia", "algoritmo", "llm", "embedding", "hola", "hello"]):
         d.add("ai")
 
@@ -229,14 +233,10 @@ def execute_general(command):
 
 # -----------------------------
 # MÓDULOS IA HOT-RELOAD (CORREGIDO)
-#   - Solo carga *_ai.py
-#   - Usa nombre estable en sys.modules
-#   - Exige can_handle + run (como tu core ya espera)
 # -----------------------------
 def reload_ai_modules():
     loaded = {}
     for fn in os.listdir(MODULES_DIR):
-        # SOLO plugins AI
         if not fn.endswith("_ai.py"):
             continue
         if fn.startswith("_"):
@@ -246,7 +246,7 @@ def reload_ai_modules():
         path = os.path.join(MODULES_DIR, fn)
 
         try:
-            mod_name = f"plugins.{name}"  # nombre estable
+            mod_name = f"plugins.{name}"
             spec = importlib.util.spec_from_file_location(mod_name, path)
             if not spec or not spec.loader:
                 continue
@@ -514,7 +514,6 @@ def ui_tail_logs(n=50):
 
 # ======================================================
 # CHATBOT: FORMATO "messages"
-#   history = [{"role":"user","content":"..."}, {"role":"assistant","content":"..."}]
 # ======================================================
 def _normalize_history_to_messages(history):
     if not history:
@@ -586,24 +585,33 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     demo.load(fn=ui_status, inputs=[], outputs=[status])
     demo.load(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
 
+# -----------------------------
+# SERVIDOR: FastAPI (root) + API + Gradio (/ui) + redirect (/ -> /ui)
+# -----------------------------
 PORT = int(os.environ.get("PORT", "7860"))
 
-# Montar FastAPI + Gradio
 try:
     from fastapi import FastAPI
+    from fastapi.responses import RedirectResponse
     import uvicorn
     from api import app as api_app
     from gradio.routes import mount_gradio_app
 
-    app = FastAPI()
-    # monta la API real
-    app.mount("/", api_app)
-    # monta gradio bajo /ui
-    app = mount_gradio_app(app, demo, path="/ui")
+    root = FastAPI()
 
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    # 1) incluir rutas del api_app (mantiene /api/health y demás)
+    root.include_router(api_app.router)
+
+    # 2) montar Gradio en /ui
+    root = mount_gradio_app(root, demo, path="/ui")
+
+    # 3) redirect del root para que HF no muestre Not Found
+    @root.get("/")
+    def _home():
+        return RedirectResponse(url="/ui")
+
+    uvicorn.run(root, host="0.0.0.0", port=PORT)
+
 except Exception:
-    # fallback: solo gradio si fastapi/uvicorn no están listos
     demo.queue()
     demo.launch(server_name="0.0.0.0", server_port=PORT)
-
