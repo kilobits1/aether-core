@@ -411,6 +411,145 @@ def self_description():
 #
 # Opcional:
 # self_description()
+# ======================================================
+# NIVEL 13 — MODELOS DE OTROS AGENTES 🧠🤝
+# ======================================================
+
+AGENT_MODELS = {}
+
+def register_agent(agent_id):
+    AGENT_MODELS[agent_id] = {
+        "beliefs": [],
+        "goals": [],
+        "confidence": 0.5,
+        "reliability": 0.5,
+        "last_action": None,
+        "history": []
+    }
+
+def update_agent_model(agent_id, action, outcome):
+    if agent_id not in AGENT_MODELS:
+        register_agent(agent_id)
+
+    model = AGENT_MODELS[agent_id]
+    model["last_action"] = action
+    model["history"].append({"action": action, "outcome": outcome})
+
+    # Ajuste simple de confiabilidad
+    if outcome == "success":
+        model["reliability"] = min(1.0, model["reliability"] + 0.05)
+    else:
+        model["reliability"] = max(0.0, model["reliability"] - 0.05)
+
+    model["confidence"] = model["reliability"]
+
+
+def infer_agent_intent(agent_id):
+    model = AGENT_MODELS.get(agent_id)
+    if not model or not model["history"]:
+        return "UNKNOWN"
+    return "COOPERATIVE" if model["reliability"] > 0.6 else "COMPETITIVE"
+
+
+# ======================================================
+# NIVEL 14 — INTERACCIÓN Y NEGOCIACIÓN 🤝⚖️
+# ======================================================
+
+NEGOTIATION_LOG = []
+
+def negotiate(my_goals, agent_id):
+    intent = infer_agent_intent(agent_id)
+    agent = AGENT_MODELS.get(agent_id, {})
+
+    proposal = {
+        "to": agent_id,
+        "offer": my_goals[:1],
+        "request": agent.get("goals", [])[:1],
+        "intent_detected": intent
+    }
+
+    NEGOTIATION_LOG.append(proposal)
+
+    if intent == "COOPERATIVE":
+        decision = "ACCEPT"
+    else:
+        decision = "COUNTER"
+
+    return {
+        "proposal": proposal,
+        "decision": decision
+    }
+
+
+# ======================================================
+# NIVEL 15 — POLÍTICAS APRENDIDAS 📜📈
+# ======================================================
+
+POLICY_MEMORY = {}
+
+def policy(state):
+    key = json.dumps(state, sort_keys=True)
+
+    if key not in POLICY_MEMORY:
+        POLICY_MEMORY[key] = {
+            "action": "EXPLORE",
+            "value": 0.0
+        }
+
+    return POLICY_MEMORY[key]["action"]
+
+
+def update_policy(state, action, reward):
+    key = json.dumps(state, sort_keys=True)
+
+    if key not in POLICY_MEMORY:
+        POLICY_MEMORY[key] = {"action": action, "value": 0.0}
+
+    POLICY_MEMORY[key]["value"] += reward
+
+    if POLICY_MEMORY[key]["value"] > 1.0:
+        POLICY_MEMORY[key]["action"] = action
+
+
+# ======================================================
+# INTEGRACIÓN CON AETHER NIVEL 10 (EXTENSIÓN LIMPIA)
+# ======================================================
+
+def multi_agent_extension(command, my_goals):
+    # Simulación de agentes externos
+    external_agents = ["aether_scout", "aether_builder"]
+
+    interactions = []
+
+    for agent_id in external_agents:
+        register_agent(agent_id)
+
+        intent = infer_agent_intent(agent_id)
+        negotiation = negotiate(my_goals, agent_id)
+
+        state = {
+            "agent": agent_id,
+            "intent": intent,
+            "energy": AETHER_STATE["energy"],
+            "focus": AETHER_STATE["focus"]
+        }
+
+        action = policy(state)
+
+        reward = 0.2 if negotiation["decision"] == "ACCEPT" else -0.1
+        update_policy(state, action, reward)
+
+        interactions.append({
+            "agent": agent_id,
+            "intent": intent,
+            "negotiation": negotiation,
+            "policy_action": action,
+            "reward": reward
+        })
+
+        update_agent_model(agent_id, action, "success" if reward > 0 else "fail")
+
+    return interactions
 
 demo.launch()
 
