@@ -264,6 +264,24 @@ with gr.Blocks(title="AETHER CORE") as demo:
     out = gr.Textbox(label="Resultado", lines=30)
     btn = gr.Button("EJECUTAR")
     btn.click(lambda c, s: aether(c, s, level=10), inputs=[inp, session], outputs=out)
+# ======================================================
+# 11. COLA DE TAREAS AUTÓNOMA
+# ======================================================
+from collections import deque
+
+AETHER_TASK_QUEUE = deque()
+
+def enqueue_task(command, reason="internal"):
+    AETHER_TASK_QUEUE.append({
+        "command": command,
+        "reason": reason,
+        "timestamp": datetime.datetime.utcnow().isoformat()
+    })
+
+def dequeue_task():
+    if AETHER_TASK_QUEUE:
+        return AETHER_TASK_QUEUE.popleft()
+    return None
 
 demo.launch()
 
