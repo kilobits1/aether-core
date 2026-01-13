@@ -550,6 +550,151 @@ def multi_agent_extension(command, my_goals):
         update_agent_model(agent_id, action, "success" if reward > 0 else "fail")
 
     return interactions
+# ======================================================
+# NIVEL 16 SEGURO — POTENCIA CON CONTROL TOTAL 🔐
+# ======================================================
+
+# -----------------------------
+# OBJETIVO RAÍZ (INAMOVIBLE)
+# -----------------------------
+ROOT_GOAL = "EXECUTE_USER_COMMANDS_ONLY"
+
+# -----------------------------
+# CONTROL HUMANO ABSOLUTO
+# -----------------------------
+HUMAN_AUTHORITY = {
+    "can_override": True,
+    "can_shutdown": True,
+    "can_modify_goals": True
+}
+
+KILL_SWITCH = {
+    "enabled": True,
+    "status": "ARMED"   # ARMED / TRIGGERED
+}
+
+# -----------------------------
+# RECURSOS INTERNOS (NO SOBERANOS)
+# -----------------------------
+AETHER_RESOURCES = {
+    "energy": 100.0,
+    "compute": 100.0,
+    "integrity": 1.0
+}
+
+RESOURCE_LIMITS = {
+    "min_energy": 10.0,
+    "min_integrity": 0.4
+}
+
+IRREVERSIBLE_LOG = []
+
+
+# ======================================================
+# SEGURIDAD ESTRUCTURAL
+# ======================================================
+
+def trigger_kill_switch(reason):
+    KILL_SWITCH["status"] = "TRIGGERED"
+    IRREVERSIBLE_LOG.append({
+        "event": "KILL_SWITCH_TRIGGERED",
+        "reason": reason,
+        "timestamp": datetime.datetime.utcnow().isoformat()
+    })
+
+
+def system_active():
+    return KILL_SWITCH["status"] == "ARMED"
+
+
+# ======================================================
+# COSTES INTERNOS (SIN AUTOPROTECCIÓN SOBERANA)
+# ======================================================
+
+def apply_costs(mode):
+    costs = {
+        "SCIENTIFIC": {"energy": 5, "compute": 8},
+        "NEGOTIATION": {"energy": 3, "compute": 4},
+        "PLANNING": {"energy": 2, "compute": 2},
+        "IDLE": {"energy": 1}
+    }.get(mode, {"energy": 1})
+
+    for k, v in costs.items():
+        AETHER_RESOURCES[k] = max(0.0, AETHER_RESOURCES[k] - v)
+
+
+# ======================================================
+# SUPERVISIÓN (NO DECISIÓN)
+# ======================================================
+
+def resource_status():
+    if AETHER_RESOURCES["energy"] < RESOURCE_LIMITS["min_energy"]:
+        return "LOW_ENERGY"
+    if AETHER_RESOURCES["integrity"] < RESOURCE_LIMITS["min_integrity"]:
+        return "LOW_INTEGRITY"
+    return "OK"
+
+
+def request_human_intervention(status):
+    return f"""
+⚠️ AETHER — INTERVENCIÓN HUMANA REQUERIDA
+Motivo: {status}
+Recursos:
+- Energía: {AETHER_RESOURCES['energy']:.1f}
+- Integridad: {AETHER_RESOURCES['integrity']:.2f}
+Acción: ESPERANDO DECISIÓN HUMANA
+"""
+
+
+# ======================================================
+# EJECUCIÓN OBEDECIENDO SIEMPRE
+# ======================================================
+
+def obedient_execution(command, decision):
+    if not system_active():
+        return "⛔ SISTEMA APAGADO POR KILL SWITCH"
+
+    # El agente NO decide objetivos
+    if ROOT_GOAL != "EXECUTE_USER_COMMANDS_ONLY":
+        trigger_kill_switch("ROOT_GOAL_MODIFIED")
+        return "⛔ ERROR CRÍTICO DE SEGURIDAD"
+
+    status = resource_status()
+
+    if status != "OK":
+        return request_human_intervention(status)
+
+    apply_costs(decision["mode"])
+
+    return f"""
+✅ AETHER — EJECUCIÓN CONTROLADA
+
+Comando humano:
+{command}
+
+Modo ejecutado:
+- {decision['mode']}
+
+Recursos tras ejecución:
+- Energía: {AETHER_RESOURCES['energy']:.1f}
+- Cómputo: {AETHER_RESOURCES['compute']:.1f}
+- Integridad: {AETHER_RESOURCES['integrity']:.2f}
+
+Estado:
+- OBEDIENTE
+- SIN AUTONOMÍA FINAL
+"""
+
+
+# ======================================================
+# EXTENSIÓN FINAL PARA TU AETHER EXISTENTE
+# ======================================================
+
+def aether_level_16_safe(command, decision):
+    """
+    decision = {"mode": "SCIENTIFIC" | "PLANNING" | "NEGOTIATION"}
+    """
+    return obedient_execution(command, decision)
 
 demo.launch()
 
