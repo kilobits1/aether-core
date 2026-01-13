@@ -127,3 +127,15 @@ def run(command: str):
         return {"ok": True, "msg": f"Encolada (NL): {task_type}", "task_id": tid, "payload": payload}
 
     return {"ok": False, "error": "No entendí el comando", "help": ["task a", "task last", "crea un archivo X con Y", "lee X", "lista archivos", "ejecuta python <code>"]}
+def _wait_task_done(task_id: str, max_wait_s: int = 4):
+    import time
+    t0 = time.time()
+    while time.time() - t0 < max_wait_s:
+        t = _store.get_task(task_id)
+        if not t:
+            time.sleep(0.2)
+            continue
+        if t.get("status") in ("success", "failed"):
+            return t
+        time.sleep(0.2)
+    return None
