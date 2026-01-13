@@ -1,12 +1,12 @@
 # ======================================================
-# AETHER CORE — PRO TOTAL (HF SPACES) + CHAT "messages" (GRADIO 4/5)
-# Mejoras clave (las que te estaban causando UI “vacía”):
-#   1) Chatbot con type="messages" (historial dicts role/content real)
-#   2) Demo snapshot demo1 auto-creado al boot (ya no falla "Snapshot no existe")
-#   3) DEDUP inteligente: permite tareas internas repetidas (scheduler) sin bloquearse
-#   4) Botón Enqueue no usa el textbox del chat (no se pisa ni se limpia raro)
-#   5) Worker procesa el comando REAL (sin " :: step" que rompía plugins)
-#   6) Status/Logs robustos (no revienta si JSON corrupto / archivos vacíos)
+# AETHER CORE — PRO TOTAL (HF SPACES) + CHAT (COMPAT GRADIO NUEVO/VIEJO)
+# FIXES INCLUIDOS:
+#   1) Chatbot compatible: usa type="messages" si existe; si no, fallback a tuples.
+#   2) demo1 auto-creado al boot (ya no falla "Snapshot no existe: demo1").
+#   3) DEDUP seguro: no bloquea scheduler (source="internal" siempre encola).
+#   4) Cola separada del chat (no pisa el textbox del chat).
+#   5) Worker ejecuta comando real (no muta el comando con ":: step").
+#   6) FastAPI/Gradio mount ultra-tolerante (api.py opcional; mount_gradio_app variable).
 # ======================================================
 
 import os
@@ -37,7 +37,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # -----------------------------
 # VERSIONADO Y ARCHIVOS
 # -----------------------------
-AETHER_VERSION = "3.4.6-pro-total-hf-chat-messages-fixed-ui"
+AETHER_VERSION = "3.4.7-pro-total-hf-compat-ui"
 
 STATE_FILE = os.path.join(DATA_DIR, "aether_state.json")
 MEMORY_FILE = os.path.join(DATA_DIR, "aether_memory.json")
@@ -45,7 +45,7 @@ STRATEGIC_FILE = os.path.join(DATA_DIR, "aether_strategic.json")
 LOG_FILE = os.path.join(DATA_DIR, "aether_log.json")
 DASHBOARD_FILE = os.path.join(DATA_DIR, "aether_dashboard.json")
 
-# demo snapshots (simple)
+# demo snapshots
 DEMO1_FILE = os.path.join(DATA_DIR, "demo1.json")
 
 MODULES_DIR = "plugins"  # dentro del repo
@@ -55,7 +55,7 @@ MAX_MEMORY_ENTRIES = 500
 MAX_LOG_ENTRIES = 1000
 MAX_STRATEGY_HISTORY = 1000
 
-# DEDUP control (evita que crezca infinito)
+# DEDUP control (evita crecimiento infinito)
 MAX_DEDUP_KEYS = 5000
 
 # -----------------------------
@@ -138,7 +138,6 @@ def ensure_demo1():
         return False
 
 def export_demo1():
-    # Export simple (lo devuelves como JSON string en UI)
     try:
         if not os.path.exists(DEMO1_FILE):
             ensure_demo1()
@@ -177,33 +176,33 @@ def update_dashboard():
 # COLA DE TAREAS
 # -----------------------------
 TASK_QUEUE = PriorityQueue()
-TASK_DEDUP = []  # guardamos en lista para poder recortar
+
+TASK_DEDUP = []      # lista para recortar
 TASK_DEDUP_SET = set()
 
 def _dedup_prune_if_needed():
-    # recorta para no crecer infinito
     with dedup_lock:
         if len(TASK_DEDUP) <= MAX_DEDUP_KEYS:
             return
-        cut = int(MAX_DEDUP_KEYS * 0.7)
-        old = TASK_DEDUP[:-cut]
-        TASK_DEDUP[:] = TASK_DEDUP[-cut:]
+        # conserva 70% más reciente
+        keep = int(MAX_DEDUP_KEYS * 0.7)
+        old = TASK_DEDUP[:-keep]
+        TASK_DEDUP[:] = TASK_DEDUP[-keep:]
         for k in old:
             TASK_DEDUP_SET.discard(k)
 
 def compute_priority(base):
     with state_lock:
         e = int(AETHER_STATE.get("energy", 0))
-    # Nota: slider 1=alta, 20=baja -> prioridad interna: menor número = más urgente
-    # Ajuste simple: si energía baja, empeora prioridad (sube número)
-    return base + (3 if e < 20 else 0)
+    # 1=alta, 20=baja. Si energía baja, empeora prioridad sumando.
+    return int(base) + (3 if e < 20 else 0)
 
 def enqueue_task(command, priority=5, source="external"):
     command = (command or "").strip()
     if not command:
         return False
 
-    # DEDUP: para internal permitimos repetición (scheduler necesita correr siempre)
+    # DEDUP solo para external (internal debe poder repetirse)
     if source != "internal":
         key = f"{command}:{source}"
         with dedup_lock:
@@ -213,7 +212,7 @@ def enqueue_task(command, priority=5, source="external"):
             TASK_DEDUP.append(key)
         _dedup_prune_if_needed()
 
-    dyn = compute_priority(int(priority))
+    dyn = compute_priority(priority)
     TASK_QUEUE.put(
         (
             dyn,
@@ -264,13 +263,10 @@ def _any_module_can_handle(command: str) -> bool:
 def decide_engine(command, domains):
     if _any_module_can_handle(command):
         return {"mode": "ai_module", "confidence": 0.99}
-
     if "science" in domains:
         return {"mode": "scientific", "confidence": 0.9}
-
     if "ai" in domains:
         return {"mode": "ai_module", "confidence": 0.95}
-
     return {"mode": "general", "confidence": 0.7}
 
 # -----------------------------
@@ -281,10 +277,7 @@ def execute_scientific(_command):
         t = np.linspace(0, 10, 200)
         a, v0, x0 = 2.0, 1.0, 0.0
         x = x0 + v0 * t + 0.5 * a * t**2
-        return {
-            "success": True,
-            "result": {"final_position": float(x[-1]), "stability": float(np.std(x))},
-        }
+        return {"success": True, "result": {"final_position": float(x[-1]), "stability": float(np.std(x))}}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -296,7 +289,12 @@ def execute_general(command):
 # -----------------------------
 def reload_ai_modules():
     loaded = {}
-    for fn in os.listdir(MODULES_DIR):
+    try:
+        files = os.listdir(MODULES_DIR)
+    except Exception:
+        files = []
+
+    for fn in files:
         if not fn.endswith("_ai.py"):
             continue
         if fn.startswith("_"):
@@ -407,7 +405,6 @@ def process_task(task):
     domains = detect_domains(command)
     decision = decide_engine(command, domains)
 
-    # Ejecuta UNA vez el comando real (si quieres steps, que sea logging, no mutar el comando)
     log_event("TASK_START", {"command": command, "mode": decision.get("mode"), "domains": domains})
 
     result = obedient_execution(command, decision)
@@ -458,7 +455,6 @@ def scheduler_loop():
     while not STOP_EVENT.is_set():
         try:
             life_cycle()
-            # internal se permite repetir
             enqueue_task("revisar estado interno", priority=10, source="internal")
             time.sleep(SCHEDULER_INTERVAL)
         except Exception as e:
@@ -585,7 +581,7 @@ def ui_tail_logs(n=50):
     return "\n".join(json.dumps(x, ensure_ascii=False) for x in tail)
 
 # -----------------------------
-# CHATBOT: HISTORIAL "messages"
+# CHATBOT: HISTORIAL "messages" (normalizador)
 # -----------------------------
 def _normalize_history_to_messages(history):
     if not history:
@@ -603,21 +599,6 @@ def _normalize_history_to_messages(history):
         out.append({"role": "system", "content": str(item)})
     return out
 
-def chat_send(message, history):
-    message = (message or "").strip()
-    history = _normalize_history_to_messages(history)
-
-    if not message:
-        return history, ""
-
-    decision, result = run_now(message)
-    reply = format_reply(decision, result)
-
-    history.append({"role": "user", "content": message})
-    history.append({"role": "assistant", "content": reply})
-
-    return history, ""
-
 # -----------------------------
 # GRADIO UI
 # -----------------------------
@@ -627,8 +608,13 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    # IMPORTANTE: type="messages" evita el render “vacío” cuando pasas dicts
-    chat = gr.Chatbot(label="AETHER Chat", height=420, type="messages")
+    # Chatbot compatible (Gradio nuevo/viejo)
+    try:
+        chat = gr.Chatbot(label="AETHER Chat", height=420, type="messages")
+        CHAT_MODE = "messages"
+    except TypeError:
+        chat = gr.Chatbot(label="AETHER Chat", height=420)
+        CHAT_MODE = "tuples"
 
     user_msg = gr.Textbox(
         label="Escribe aquí (Chat)",
@@ -643,6 +629,7 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     gr.Markdown("---")
     gr.Markdown("### Cola de tareas (separado del chat)")
+
     task_cmd = gr.Textbox(
         label="Comando para cola",
         placeholder="Ej: analizar logs / revisar estado interno / task a",
@@ -659,11 +646,41 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     export_out = gr.Code(label="Export demo1", language="json")
 
+    def chat_send(message, history):
+        message = (message or "").strip()
+        if not message:
+            return history, ""
+
+        decision, result = run_now(message)
+        reply = format_reply(decision, result)
+
+        if CHAT_MODE == "messages":
+            history = _normalize_history_to_messages(history)
+            history.append({"role": "user", "content": message})
+            history.append({"role": "assistant", "content": reply})
+            return history, ""
+
+        # tuples mode (Gradio viejo)
+        history = history or []
+        # si viene dicts, convertimos a tuples básicos
+        if history and isinstance(history[0], dict):
+            tuples = []
+            last_user = None
+            for m in history:
+                if m.get("role") == "user":
+                    last_user = m.get("content", "")
+                elif m.get("role") == "assistant":
+                    tuples.append((last_user or "", m.get("content", "")))
+                    last_user = None
+            history = tuples
+
+        history.append((message, reply))
+        return history, ""
+
     btn_send.click(fn=chat_send, inputs=[user_msg, chat], outputs=[chat, user_msg])
 
     btn_enqueue.click(fn=ui_enqueue, inputs=[task_cmd, prio], outputs=[status])
     btn_reload.click(fn=ui_reload_modules, inputs=[], outputs=[status])
-
     btn_export_demo.click(fn=export_demo1, inputs=[], outputs=[export_out])
 
     btn_refresh_logs.click(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
@@ -674,7 +691,7 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     demo.load(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
 
 # -----------------------------
-# SERVIDOR: FastAPI (root) + API + Gradio (/ui) + redirect (/ -> /ui)
+# SERVIDOR: FastAPI (opcional) + /ui + redirect / -> /ui
 # -----------------------------
 PORT = int(os.environ.get("PORT", "7860"))
 
@@ -682,23 +699,40 @@ try:
     from fastapi import FastAPI
     from fastapi.responses import RedirectResponse
     import uvicorn
-    from api import app as api_app
-    from gradio.routes import mount_gradio_app
+
+    # API opcional (si existe api.py con app.router)
+    try:
+        from api import app as api_app
+        API_ROUTER = api_app.router
+    except Exception:
+        API_ROUTER = None
+
+    # mount_gradio_app cambia según versión
+    try:
+        from gradio.routes import mount_gradio_app
+    except Exception:
+        try:
+            from gradio import mount_gradio_app
+        except Exception:
+            mount_gradio_app = None
 
     root = FastAPI()
 
-    # 1) incluir rutas del api_app (mantiene /api/health y demás)
-    root.include_router(api_app.router)
+    if API_ROUTER is not None:
+        root.include_router(API_ROUTER)
 
-    # 2) montar Gradio en /ui
-    root = mount_gradio_app(root, demo, path="/ui")
+    if mount_gradio_app is not None:
+        root = mount_gradio_app(root, demo, path="/ui")
 
-    # 3) redirect del root para que HF no muestre Not Found
-    @root.get("/")
-    def _home():
-        return RedirectResponse(url="/ui")
+        @root.get("/")
+        def _home():
+            return RedirectResponse(url="/ui")
 
-    uvicorn.run(root, host="0.0.0.0", port=PORT)
+        uvicorn.run(root, host="0.0.0.0", port=PORT)
+
+    else:
+        demo.queue()
+        demo.launch(server_name="0.0.0.0", server_port=PORT)
 
 except Exception:
     demo.queue()
