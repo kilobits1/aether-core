@@ -2,7 +2,6 @@ import gradio as gr
 import datetime
 import json
 import os
-import uuid
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -21,14 +20,55 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 # ======================================================
-# CONFIG
+# CORE CONFIG
 # ======================================================
 AGENT_NAME = "aether-core"
 EXECUTION_MODE = "SIMULATION"
 DEFAULT_SESSION = "default"
 
 # ======================================================
-# CLASSIFICATION
+# DOMAIN MAP (ONTOLOGÍA BASE)
+# ======================================================
+DOMAIN_MAP = {
+    "matematicas": ["ecuacion", "calculo", "modelo", "optimizacion"],
+    "fisica": ["fuerza", "energia", "movimiento", "termodinamica"],
+    "quimica": ["reaccion", "molecula", "compuesto", "quimico"],
+    "electronica": ["voltaje", "corriente", "sensor", "esp32", "pcb", "relay"],
+    "mecanica": ["estructura", "movimiento", "engranaje", "fuerza"],
+    "mecatronica": ["robot", "control", "actuador", "sensor"],
+    "medicina": ["tratamiento", "diagnostico", "farmaco", "paciente"],
+    "biologia": ["celula", "organismo", "genetica"],
+    "nanotecnologia": ["nanobot", "nano", "molecular"],
+    "ambiental": ["contaminacion", "agua", "energia limpia"],
+    "aeroespacial": ["nasa", "orbita", "cohete", "satelite"]
+}
+
+# ======================================================
+# MODE SELECTION
+# ======================================================
+def select_mode(command):
+    t = command.lower()
+    if any(k in t for k in ["analizar", "calcular", "demostrar"]):
+        return "scientific"
+    if any(k in t for k in ["diseñar", "crear", "construir"]):
+        return "engineering"
+    return "general"
+
+# ======================================================
+# DOMAIN DETECTION
+# ======================================================
+def detect_domains(command):
+    t = command.lower()
+    domains = []
+    for domain, keywords in DOMAIN_MAP.items():
+        for k in keywords:
+            if k in t:
+                domains.append(domain)
+                break
+    return domains if domains else ["general"]
+
+# ======================================================
+# COMMAND TYPE
 # ======================================================
 def classify_command(text):
     t = text.lower()
@@ -36,7 +76,7 @@ def classify_command(text):
         return "system"
     if "interruptor" in t or "hardware" in t:
         return "hardware"
-    if t.startswith("crear"):
+    if t.startswith("crear") or t.startswith("diseñar"):
         return "task"
     return "order"
 
@@ -46,77 +86,67 @@ def classify_command(text):
 def log_event(data):
     data["time"] = datetime.datetime.utcnow().isoformat()
     data["agent"] = AGENT_NAME
-    data["mode"] = EXECUTION_MODE
+    data["execution_mode"] = EXECUTION_MODE
     db.collection("aether_memory").add(data)
 
 # ======================================================
-# HARDWARE DESIGN ENGINE
+# HARDWARE ENGINE (EJEMPLO)
 # ======================================================
 def design_interruptor_inteligente():
     return """
-🔌 DISEÑO: INTERRUPTOR INTELIGENTE CON VOZ + FÍSICO
+🔌 DISEÑO: INTERRUPTOR INTELIGENTE (FÍSICO + VOZ)
 
-1️⃣ COMPONENTES PRINCIPALES (BOM)
-- ESP32 (WiFi + Bluetooth)
-- Relé SSR 5V (carga AC)
-- Fuente AC-DC 220V → 5V
-- Pulsador físico (interruptor)
-- Micrófono digital (INMP441 o similar)
-- Foco LED AC 220V
-- Optoacoplador (seguridad)
-- Fusible + varistor (protección)
+Componentes:
+- ESP32
+- Relé SSR AC
+- Fuente AC-DC
+- Pulsador
+- Micrófono digital
+- Protección eléctrica
 
-2️⃣ ARQUITECTURA ELECTRÓNICA
-[ AC 220V ]
-   |
-[Fusible]
-   |
-[Fuente AC-DC 5V] ----> ESP32 ----> Relé SSR ----> FOCO
-                          |
-                     Micrófono
-                          |
-                     Pulsador
+Arquitectura:
+AC → Fuente → ESP32 → Relé → Carga
 
-3️⃣ LÓGICA DE CONTROL
-- Pulsador → GPIO → Toggle relé
-- Comando de voz → ESP32 → Validación → Relé
-- Estado guardado en memoria flash
+Lógica:
+- Pulsador físico
+- Comando de voz
+- Estado persistente
 
-4️⃣ COMANDOS DE VOZ (EJEMPLO)
-- "Aether, enciende la luz"
-- "Aether, apaga el foco"
-
-5️⃣ SEGURIDAD
-✔ Aislamiento AC / DC
-✔ Relé de estado sólido
-✔ Protección de sobrecorriente
-
-6️⃣ LISTO PARA:
-- PCB
-- Firmware
-- Integración con app móvil
+Aplicable a:
+IoT · Domótica · Industria · Educación
 """
 
 # ======================================================
-# CORE
+# CORE BRAIN
 # ======================================================
 def aether(command, session=DEFAULT_SESSION):
     cmd_type = classify_command(command)
+    mode = select_mode(command)
+    domains = detect_domains(command)
 
     log_event({
         "command": command,
         "type": cmd_type,
-        "session": session
+        "session": session,
+        "mode": mode,
+        "domains": domains
     })
 
     if cmd_type == "system":
         return f"""
-🧠 ESTADO AETHER
+🧠 ESTADO DE AETHER
 
 Agente: {AGENT_NAME}
-Modo: {EXECUTION_MODE}
+Modo ejecución: {EXECUTION_MODE}
 Sesión: {session}
-Estado: operativo · estable · técnico
+
+Capacidades activas:
+- Multidominio
+- Memoria persistente
+- Diseño técnico
+- Análisis científico
+
+Estado: OPERATIVO
 """
 
     if cmd_type == "hardware":
@@ -125,25 +155,30 @@ Estado: operativo · estable · técnico
     return f"""
 🧠 AETHER ACTIVO
 
-Comando recibido: {command}
-Tipo detectado: {cmd_type}
-Estado: listo para diseño, planificación y expansión
+Comando: {command}
+
+Tipo: {cmd_type}
+Modo cognitivo: {mode}
+Dominios detectados: {", ".join(domains)}
+
+Estado:
+Listo para análisis, diseño y expansión multidisciplinaria.
 """
 
 # ======================================================
 # UI
 # ======================================================
 with gr.Blocks(title="AETHER CORE") as demo:
-    gr.Markdown("## 🧠 Aether Core — Generador Técnico")
-    gr.Markdown("Diseño · Arquitectura · Hardware · Seguridad")
+    gr.Markdown("## 🧠 Aether Core — Sistema Multidisciplinario")
+    gr.Markdown("Ciencia · Ingeniería · Robótica · Medicina · Electrónica")
 
     session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
     inp = gr.Textbox(
         label="Orden",
-        placeholder="Ej: diseñar interruptor inteligente / estado",
+        placeholder="Ej: Diseñar nanobot médico / estado",
         lines=4
     )
-    out = gr.Textbox(label="Respuesta", lines=22)
+    out = gr.Textbox(label="Respuesta", lines=24)
 
     btn = gr.Button("Enviar orden")
     btn.click(aether, inputs=[inp, session], outputs=out)
