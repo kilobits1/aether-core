@@ -200,14 +200,74 @@ def self_evaluate(output):
     return score
 
 # ======================================================
-# 10. CORE BRAIN 🧠
+# 9.1 MOTOR DE DECISIÓN 🧠 (NIVEL 7)
+# ======================================================
+def decide_engine(command, domains):
+    decision = {
+        "mode": "general",
+        "confidence": 0.6,
+        "reason": "Respuesta general"
+    }
+
+    if is_scientific(command):
+        decision["mode"] = "scientific"
+        decision["confidence"] = 0.95
+        decision["reason"] = "Comando científico detectado"
+
+    elif "plan" in command.lower() or "crear" in command.lower():
+        decision["mode"] = "planning"
+        decision["confidence"] = 0.75
+        decision["reason"] = "Requiere planificación"
+
+    return decision
+
+# ======================================================
+# 9.2 PLANIFICADOR DE ACCIONES 📋
+# ======================================================
+def build_action_plan(decision, command):
+    if decision["mode"] == "scientific":
+        return [
+            "Preparar simulación",
+            "Ejecutar experimentos",
+            "Evaluar resultados",
+            "Aprender y almacenar"
+        ]
+
+    if decision["mode"] == "planning":
+        return [
+            "Analizar objetivo",
+            "Diseñar arquitectura",
+            "Definir pasos",
+            "Evaluar viabilidad"
+        ]
+
+    return [
+        "Analizar orden",
+        "Responder informativamente"
+    ]
+
+# ======================================================
+# 10. CORE BRAIN 🧠 (AUTÓNOMO NIVEL 7)
 # ======================================================
 def aether(command, session=DEFAULT_SESSION):
 
     domains = detect_domains(command)
+    decision = decide_engine(command, domains)
+    plan = build_action_plan(decision, command)
 
-    if is_scientific(command):
+    if decision["mode"] == "scientific":
         output = scientific_engine(command)
+
+    elif decision["mode"] == "planning":
+        output = f"""
+🧠 AETHER — PLANIFICACIÓN ESTRATÉGICA
+
+Orden:
+{command}
+
+Plan de acción:
+- """ + "\n- ".join(plan)
+
     else:
         output = f"""
 🧠 AETHER — RESPUESTA GENERAL
@@ -215,26 +275,31 @@ def aether(command, session=DEFAULT_SESSION):
 Orden:
 {command}
 
-Dominios:
-{domains}
-
-Estado:
-LISTO PARA CIENCIA, HARDWARE Y MULTIMEDIA
-"""
+Plan mental:
+- """ + "\n- ".join(plan)
 
     quality = self_evaluate(output)
     store_memory(command, output, domains, session, quality)
 
-    return output + f"\n🔍 Autoevaluación: {quality}/4"
+    return f"""
+DECISIÓN TOMADA:
+- Modo: {decision['mode']}
+- Confianza: {decision['confidence']}
+- Razón: {decision['reason']}
+
+{output}
+
+🔍 Autoevaluación: {quality}/4
+"""
 
 # ======================================================
 # 11. UI
 # ======================================================
 with gr.Blocks(title="AETHER CORE") as demo:
-    gr.Markdown("## 🧠 AETHER CORE — IA Científica Evolutiva")
+    gr.Markdown("## 🧠 AETHER CORE — IA Científica Evolutiva (Nivel 7)")
     session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
     inp = gr.Textbox(label="Orden", lines=4)
-    out = gr.Textbox(label="Resultado", lines=28)
+    out = gr.Textbox(label="Resultado", lines=30)
     btn = gr.Button("EJECUTAR AETHER", variant="primary")
     btn.click(aether, inputs=[inp, session], outputs=out)
 
