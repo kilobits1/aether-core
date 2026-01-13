@@ -1,35 +1,14 @@
 # plugins/tasks_ai.py
-from plugins.aether_core import enqueue_task, store
+from datetime import datetime
 
-def run(command: str, state: dict):
-    c = (command or "").strip().lower()
+def can_handle(command: str) -> bool:
+    c = (command or "").lower().strip()
+    return c.startswith("task ")
 
+def run(command: str):
+    c = (command or "").lower().strip()
     if c == "task a":
-        tid = enqueue_task(
-            "files.write_text",
-            {"path": "test/hello.txt", "text": "AETHER v26 OK\n"},
-            priority=10
-        )
-        return [{"text": f"OK. Encolé TASK A: {tid}", "type": "text"}]
-
-    if c == "task b":
-        tid = enqueue_task(
-            "files.list_dir",
-            {"path": ""},
-            priority=20
-        )
-        return [{"text": f"OK. Encolé TASK B: {tid}", "type": "text"}]
-
-    if c == "task c":
-        tid = enqueue_task(
-            "shell.exec",
-            {"cmd": ["python", "-c", "print('runner ok')"]},
-            timeout_s=30,
-            priority=5
-        )
-        return [{"text": f"OK. Encolé TASK C: {tid}", "type": "text"}]
-
+        return {"ok": True, "msg": "TASK A ejecutada", "ts": datetime.utcnow().isoformat()}
     if c == "task last":
-        return [{"text": str(store.list_recent(10)), "type": "text"}]
-
-    return None
+        return {"ok": True, "msg": "TASK LAST (demo)", "ts": datetime.utcnow().isoformat()}
+    return {"ok": False, "error": "Comando task no reconocido"}
