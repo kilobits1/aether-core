@@ -29,9 +29,6 @@ AGENT_NAME = "aether-core"
 EXECUTION_MODE = "SIMULATION"
 DEFAULT_SESSION = "default"
 
-def is_real_mode():
-    return EXECUTION_MODE == "REAL"
-
 # ======================================================
 # 3. MISIONES
 # ======================================================
@@ -41,7 +38,8 @@ MISSIONS = {
         "Aprender de interacciones",
         "Recordar contexto",
         "Optimizar decisiones",
-        "Ejecutar modelos científicos"
+        "Ejecutar modelos científicos",
+        "Experimentar y evaluar hipótesis"
     ]
 }
 
@@ -51,7 +49,6 @@ MISSIONS = {
 DOMAIN_MAP = {
     "matematicas": ["ecuacion", "calculo", "modelo"],
     "fisica": ["fuerza", "energia", "movimiento"],
-    "electronica": ["sensor", "esp32", "rele"],
     "ia": ["modelo", "red", "inteligencia"],
     "multimedia": ["video", "musica", "audio"],
     "software": ["app", "aplicacion"]
@@ -81,64 +78,76 @@ def store_memory(command, response, domains, session, quality):
         "time": datetime.datetime.utcnow().isoformat()
     })
 
-def retrieve_similar_memories(command, top_k=3):
+# ======================================================
+# 6. MEMORIA CIENTÍFICA 🔬
+# ======================================================
+def store_scientific_result(data):
     if not db:
-        return []
-    qv = text_to_vector(command)
-    memories = []
-    for doc in db.collection("aether_memory").stream():
-        data = doc.to_dict()
-        sim = cosine_similarity(qv, data["vector"])
-        memories.append((sim, data))
-    memories.sort(reverse=True, key=lambda x: x[0])
-    return [m for _, m in memories[:top_k]]
+        return
+    db.collection("aether_science").add({
+        **data,
+        "timestamp": datetime.datetime.utcnow().isoformat()
+    })
 
 # ======================================================
-# 6. MOTOR CIENTÍFICO REAL 🔬
+# 7. MOTOR CIENTÍFICO AVANZADO
 # ======================================================
 def scientific_engine(command):
-    """
-    Motor científico básico ejecutable.
-    Simula un sistema físico simple: movimiento con aceleración constante.
-    """
 
-    # Variables del modelo
-    t = np.linspace(0, 10, 100)
-    a = 2.0        # aceleración
-    v0 = 1.0       # velocidad inicial
-    x0 = 0.0       # posición inicial
+    t = np.linspace(0, 10, 200)
+    experiments = []
+    hypotheses = []
 
-    # Modelo físico
-    v = v0 + a * t
-    x = x0 + v0 * t + 0.5 * a * t**2
+    # Hipótesis automática
+    for a in [1.0, 2.0, 3.0]:
+        hypotheses.append(f"Si a = {a}, la posición final aumenta proporcionalmente")
 
-    # Evaluación
-    max_pos = float(np.max(x))
-    final_vel = float(v[-1])
+        v0 = 1.0
+        x0 = 0.0
 
-    result = f"""🔬 MOTOR CIENTÍFICO EJECUTADO
-Modelo: Movimiento rectilíneo uniformemente acelerado
+        v = v0 + a * t
+        x = x0 + v0 * t + 0.5 * a * t**2
 
-Ecuaciones:
-v(t) = v0 + a·t
-x(t) = x0 + v0·t + ½·a·t²
+        experiments.append({
+            "a": a,
+            "final_velocity": float(v[-1]),
+            "final_position": float(x[-1]),
+            "max_position": float(np.max(x))
+        })
 
-Parámetros:
-a = {a}
-v0 = {v0}
-x0 = {x0}
+    # Evaluación científica
+    best = max(experiments, key=lambda e: e["final_position"])
+    stability = np.std([e["final_position"] for e in experiments])
 
-Resultados:
-- Velocidad final: {final_vel:.2f}
-- Posición máxima: {max_pos:.2f}
+    store_scientific_result({
+        "command": command,
+        "experiments": experiments,
+        "best_model": best,
+        "stability": stability
+    })
 
-Estado: SIMULACIÓN COMPLETADA
+    result = "🔬 MOTOR CIENTÍFICO AVANZADO\n\n"
+    result += "Hipótesis generadas:\n"
+    for h in hypotheses:
+        result += f"- {h}\n"
+
+    result += "\nResultados experimentales:\n"
+    for e in experiments:
+        result += f"a={e['a']} → pos_final={e['final_position']:.2f}\n"
+
+    result += f"""
+Evaluación:
+- Mejor modelo: a = {best['a']}
+- Posición final óptima: {best['final_position']:.2f}
+- Estabilidad (σ): {stability:.4f}
+
+Estado: EXPERIMENTACIÓN COMPLETA
 """
 
     return result
 
 # ======================================================
-# 7. UTILIDADES COGNITIVAS
+# 8. UTILIDADES
 # ======================================================
 def detect_domains(command):
     t = command.lower()
@@ -146,40 +155,20 @@ def detect_domains(command):
     return domains if domains else ["general"]
 
 def is_scientific(command):
-    return any(k in command.lower() for k in ["calcular", "simular", "modelo", "fisica", "ecuacion"])
+    return any(k in command.lower() for k in ["calcular", "simular", "modelo", "fisica", "experimento"])
 
-# ======================================================
-# 8. AUTOEVALUACIÓN
-# ======================================================
 def self_evaluate(output):
     score = 0
-    if len(output) > 200: score += 1
-    if "Modelo" in output: score += 1
+    if "Hipótesis" in output: score += 1
     if "Resultados" in output: score += 1
-    if "SIMULACIÓN" in output: score += 1
+    if "Evaluación" in output: score += 1
+    if "EXPERIMENTACIÓN" in output: score += 1
     return score
 
 # ======================================================
-# 9. EXPORTACIÓN
-# ======================================================
-def export_pdf(content, filename="aether_output.pdf"):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=10)
-    pdf.multi_cell(0, 8, content)
-    pdf.output(filename)
-
-# ======================================================
-# 10. CORE BRAIN 🧠
+# 9. CORE BRAIN 🧠
 # ======================================================
 def aether(command, session=DEFAULT_SESSION):
-
-    memories = retrieve_similar_memories(command)
-    memory_context = ""
-    if memories:
-        memory_context = "🧠 CONTEXTO RECORDADO:\n"
-        for m in memories:
-            memory_context += f"- {m['command']} ({m['domains']})\n"
 
     domains = detect_domains(command)
 
@@ -196,21 +185,16 @@ Dominios: {", ".join(domains)}
 4. Evaluación
 """
 
-    final_output = memory_context + "\n" + output
-    quality = self_evaluate(final_output)
+    quality = self_evaluate(output)
+    store_memory(command, output, domains, session, quality)
 
-    store_memory(command, final_output, domains, session, quality)
-
-    if is_real_mode():
-        export_pdf(final_output)
-
-    return final_output + f"\n🔍 Autoevaluación: {quality}/4"
+    return output + f"\n🔍 Autoevaluación: {quality}/4"
 
 # ======================================================
-# 11. UI
+# 10. UI
 # ======================================================
 with gr.Blocks(title="AETHER CORE") as demo:
-    gr.Markdown("## 🧠 AETHER CORE — Núcleo Cognitivo + Motor Científico")
+    gr.Markdown("## 🧠 AETHER CORE — IA Científica Autónoma")
     session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
     inp = gr.Textbox(label="Orden", lines=4)
     out = gr.Textbox(label="Resultado", lines=30)
@@ -218,6 +202,7 @@ with gr.Blocks(title="AETHER CORE") as demo:
     btn.click(aether, inputs=[inp, session], outputs=out)
 
 demo.launch()
+
 
 
 
