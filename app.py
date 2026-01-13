@@ -91,12 +91,9 @@ def scientific_engine(command):
     experiments = []
     history = []
 
-    real_data = load_real_data()
-
     for a in [1.0, 2.0, 3.0, 4.0]:
         v0 = 1.0
         x0 = 0.0
-
         v = v0 + a * t
         x = x0 + v0 * t + 0.5 * a * t**2
 
@@ -105,7 +102,6 @@ def scientific_engine(command):
             "final_position": float(x[-1]),
             "final_velocity": float(v[-1])
         })
-
         history.append(x)
 
     best = max(experiments, key=lambda e: e["final_position"])
@@ -129,7 +125,9 @@ def scientific_engine(command):
     plt.savefig(fig_id)
     plt.close()
 
-    result = f"""
+    generate_scientific_report(command, experiments, best, stability)
+
+    return f"""
 🔬 AETHER — CIENCIA EVOLUTIVA
 
 Experimentos ejecutados: {len(experiments)}
@@ -138,20 +136,13 @@ Mejor parámetro:
 - a = {best['a']}
 - Posición final = {best['final_position']:.2f}
 
-Estabilidad del sistema (σ):
-- {stability:.4f}
-
-Aprendizaje:
-- Modelo guardado para futuras decisiones
+Estabilidad (σ): {stability:.4f}
 
 Gráfico generado:
 - {fig_id}
 
 Estado: CIENCIA + APRENDIZAJE COMPLETADOS
 """
-    generate_scientific_report(command, experiments, best, stability)
-
-    return result
 
 # ======================================================
 # 8. REPORTE CIENTÍFICO (PDF)
@@ -160,7 +151,6 @@ def generate_scientific_report(command, experiments, best, stability):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", size=11)
-
     pdf.multi_cell(0, 8, f"""
 AETHER SCIENTIFIC REPORT
 
@@ -179,7 +169,6 @@ Estabilidad:
 Fecha:
 {datetime.datetime.utcnow().isoformat()}
 """)
-
     pdf.output("aether_scientific_report.pdf")
 
 # ======================================================
@@ -194,112 +183,88 @@ def is_scientific(command):
 
 def self_evaluate(output):
     score = 0
-    for k in ["CIENCIA", "Aprendizaje", "Experimentos", "Gráfico"]:
+    for k in ["CIENCIA", "Experimentos", "Gráfico"]:
         if k in output:
             score += 1
     return score
 
 # ======================================================
-# 9.1 MOTOR DE DECISIÓN 🧠 (NIVEL 7)
+# 9.1 MOTOR DE DECISIÓN 🧠
 # ======================================================
 def decide_engine(command, domains):
-    decision = {
-        "mode": "general",
-        "confidence": 0.6,
-        "reason": "Respuesta general"
-    }
+    decision = {"mode": "general", "confidence": 0.6, "reason": "Respuesta general"}
 
     if is_scientific(command):
-        decision["mode"] = "scientific"
-        decision["confidence"] = 0.95
-        decision["reason"] = "Comando científico detectado"
-
+        decision.update({"mode": "scientific", "confidence": 0.95, "reason": "Comando científico"})
     elif "plan" in command.lower() or "crear" in command.lower():
-        decision["mode"] = "planning"
-        decision["confidence"] = 0.75
-        decision["reason"] = "Requiere planificación"
+        decision.update({"mode": "planning", "confidence": 0.75, "reason": "Planificación requerida"})
 
     return decision
 
 # ======================================================
-# 9.2 PLANIFICADOR DE ACCIONES 📋
+# 9.2 PLANIFICADOR
 # ======================================================
 def build_action_plan(decision, command):
     if decision["mode"] == "scientific":
-        return [
-            "Preparar simulación",
-            "Ejecutar experimentos",
-            "Evaluar resultados",
-            "Aprender y almacenar"
-        ]
-
+        return ["Simular", "Evaluar", "Aprender"]
     if decision["mode"] == "planning":
-        return [
-            "Analizar objetivo",
-            "Diseñar arquitectura",
-            "Definir pasos",
-            "Evaluar viabilidad"
-        ]
-
-    return [
-        "Analizar orden",
-        "Responder informativamente"
-    ]
+        return ["Analizar", "Diseñar", "Validar"]
+    return ["Responder"]
 
 # ======================================================
-# 10. CORE BRAIN 🧠 (AUTÓNOMO NIVEL 7)
+# 9.3 LOOP AUTÓNOMO 🔁
+# ======================================================
+def autonomous_loop(command, cycles=3):
+    log = []
+    for i in range(1, cycles + 1):
+        decision = decide_engine(command, detect_domains(command))
+        log.append(f"Ciclo {i}: modo={decision['mode']} conf={decision['confidence']}")
+        command = f"Refinar ciclo {i}"
+    return log
+
+# ======================================================
+# 10. CORE BRAIN 🧠 AUTÓNOMO
 # ======================================================
 def aether(command, session=DEFAULT_SESSION):
 
     domains = detect_domains(command)
     decision = decide_engine(command, domains)
     plan = build_action_plan(decision, command)
+    loop = autonomous_loop(command)
 
     if decision["mode"] == "scientific":
         output = scientific_engine(command)
-
-    elif decision["mode"] == "planning":
-        output = f"""
-🧠 AETHER — PLANIFICACIÓN ESTRATÉGICA
-
-Orden:
-{command}
-
-Plan de acción:
-- """ + "\n- ".join(plan)
-
     else:
         output = f"""
-🧠 AETHER — RESPUESTA GENERAL
+🧠 AETHER — RESPUESTA INTELIGENTE
 
 Orden:
 {command}
 
-Plan mental:
+Plan:
 - """ + "\n- ".join(plan)
 
-    quality = self_evaluate(output)
-    store_memory(command, output, domains, session, quality)
+    store_memory(command, output, domains, session, self_evaluate(output))
 
     return f"""
-DECISIÓN TOMADA:
-- Modo: {decision['mode']}
-- Confianza: {decision['confidence']}
-- Razón: {decision['reason']}
+DECISIÓN:
+Modo: {decision['mode']}
+Confianza: {decision['confidence']}
+Razón: {decision['reason']}
 
 {output}
 
-🔍 Autoevaluación: {quality}/4
-"""
+🔁 LOOP AUTÓNOMO:
+""" + "\n".join(loop)
 
 # ======================================================
 # 11. UI
 # ======================================================
 with gr.Blocks(title="AETHER CORE") as demo:
-    gr.Markdown("## 🧠 AETHER CORE — IA Científica Evolutiva (Nivel 7)")
+    gr.Markdown("## 🧠 AETHER CORE — AGENTE AUTÓNOMO NIVEL 7.8")
     session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
     inp = gr.Textbox(label="Orden", lines=4)
-    out = gr.Textbox(label="Resultado", lines=30)
+    out = gr.Textbox(label="Resultado", lines=32)
     btn = gr.Button("EJECUTAR AETHER", variant="primary")
     btn.click(aether, inputs=[inp, session], outputs=out)
 
