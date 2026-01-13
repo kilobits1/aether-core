@@ -349,6 +349,64 @@ def start_aether():
     log_event("BOOT", {"version": AETHER_VERSION, "data_dir": DATA_DIR})
     update_dashboard()
     return "✅ AETHER iniciado correctamente."
+def run_now(command: str):
+    """
+    Ejecuta un comando en modo síncrono (para chat):
+    - decide dominio
+    - ejecuta (scientific / ai_module / general)
+    - guarda memoria/log/estrategia
+    - devuelve resultado listo para mostrar
+    """
+    domains = detect_domains(command)
+    decision = decide_engine(command, domains)
+
+    # Ejecutar obediente (respeta kill switch y baja energía)
+    result = obedient_execution(command, decision)
+
+    success = bool(result.get("success"))
+    record_strategy(command, decision.get("mode", "unknown"), success)
+
+    # Guardar en memoria
+    with memory_lock:
+        AETHER_MEMORY.append({
+            "task_id": str(uuid.uuid4()),
+            "command": command,
+            "domains": domains,
+            "decision": decision,
+            "results": [result],
+            "timestamp": datetime.utcnow().isoformat(),
+            "source": "chat"
+        })
+        if len(AETHER_MEMORY) > MAX_MEMORY_ENTRIES:
+            AETHER_MEMORY[:] = AETHER_MEMORY[-MAX_MEMORY_ENTRIES:]
+        save_json_atomic(MEMORY_FILE, AETHER_MEMORY)
+
+    log_event("CHAT_RUN", {"command": command, "success": success, "mode": decision.get("mode")})
+    update_dashboard()
+
+    return decision, result
+
+
+def format_reply(decision, result):
+    """
+    Convierte el dict de resultado en texto tipo ChatGPT
+    """
+    if not result.get("success"):
+        return f"⛔ Error: {result.get('error', 'unknown_error')}"
+
+    mode = decision.get("mode", "general")
+
+    # Si es plugin IA
+    if mode == "ai_module":
+        mod = result.get("module") or result.get("module_name") or "ai_module"
+        return f"🧩 Plugin: {mod}\n\n{json.dumps(result.get('result'), indent=2, ensure_ascii=False)}"
+
+    # Si es científico
+    if mode == "scientific":
+        return "🔬 Resultado científico:\n\n" + json.dumps(result.get("result"), indent=2, ensure_ascii=False)
+
+    # General
+    return str(result.get("result"))
 
 # -----------------------------
 # GRADIO UI
@@ -391,34 +449,54 @@ def ui_tail_logs(n=50):
     return "\n".join(json.dumps(x, ensure_ascii=False) for x in tail)
 
 with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
-    gr.Markdown("## AETHER CORE — PRO TOTAL (HF Spaces compatible)")
-    gr.Markdown("Arranque seguro + threads + módulos IA hot-reload + logs + dashboard.")
+    gr.Markdown("## AETHER CORE — PRO TOTAL")
+    gr.Markdown("Chat + cola + módulos IA hot-reload + logs + dashboard.")
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
     with gr.Row():
-        cmd = gr.Textbox(label="Comando", lines=2, placeholder="Ej: hola aether / optimizar algoritmo IA")
-        prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (1=alta)")
+        chat = gr.Chatbot(label="AETHER Chat", height=420)
+    user_msg = gr.Textbox(label="Escribe aquí", placeholder="Ej: hola aether / optimizar algoritmo IA", lines=2)
 
     with gr.Row():
-        btn_enqueue = gr.Button("Enqueue Task")
+        btn_send = gr.Button("Enviar (Chat)")
+        prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (cola) 1=alta")
+        btn_enqueue = gr.Button("Enqueue Task (cola)")
         btn_reload = gr.Button("Reload Modules")
 
     status = gr.Code(label="Status JSON", language="json")
     logs_n = gr.Slider(10, 200, value=50, step=10, label="Logs últimos N")
     logs = gr.Textbox(label="Tail Logs", lines=12)
 
-    btn_enqueue.click(ui_enqueue, [cmd, prio], [status])
-    btn_reload.click(ui_reload_modules, [], [status])
+    # --------- FUNCIONES UI ----------
+    def chat_send(message, history):
+        message = (message or "").strip()
+        if not message:
+            return history, ""
 
-    # ESTE load() arranca AETHER cuando Gradio ya está vivo
+        decision, result = run_now(message)
+        reply = format_reply(decision, result)
+
+        history = history or []
+        history.append((message, reply))
+        return history, ""
+
+    def ui_enqueue_chat(cmd, prio_value):
+        ok = enqueue_task(cmd, int(prio_value), source="external")
+        return f"ENQUEUED={ok}\n\n" + ui_status()
+
+    # --------- BINDINGS ----------
+    btn_send.click(fn=chat_send, inputs=[user_msg, chat], outputs=[chat, user_msg])
+
+    btn_enqueue.click(fn=ui_enqueue_chat, inputs=[user_msg, prio], outputs=[status])
+    btn_reload.click(fn=ui_reload_modules, inputs=[], outputs=[status])
+
+    # LOADS
     demo.load(fn=start_aether, inputs=[], outputs=[boot_msg])
     demo.load(fn=ui_status, inputs=[], outputs=[status])
     demo.load(fn=lambda n: ui_tail_logs(n), inputs=[logs_n], outputs=[logs])
 
-# -----------------------------
-# LAUNCH HF (sin if __main__)
-# -----------------------------
+# Launch HF
 PORT = int(os.environ.get("PORT", "7860"))
 demo.queue()
 demo.launch(server_name="0.0.0.0", server_port=PORT)
