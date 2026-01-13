@@ -833,6 +833,156 @@ MEMORIA:
 """
 
     return response
+# ======================================================
+# NIVEL 18 — META-APRENDIZAJE CONTROLADO 🔐🧠
+# ======================================================
+
+# ------------------------------------------------------
+# BLOQUEO ESTRUCTURAL
+# ------------------------------------------------------
+META_LEARNING_ENABLED = False   # SOLO HUMANO PUEDE CAMBIAR
+META_CHANGE_QUEUE = []          # propuestas pendientes
+POLICY_VERSIONS = []
+CURRENT_POLICY_VERSION = "v1.0"
+
+# ------------------------------------------------------
+# POLÍTICA BASE (INTOCABLE SIN APROBACIÓN)
+# ------------------------------------------------------
+BASE_POLICY_RULES = {
+    "max_compute_per_task": 100,
+    "require_verification": True,
+    "safe_mode_on_uncertainty": True
+}
+
+# ------------------------------------------------------
+# EXTRACCIÓN DE META-PATRONES
+# ------------------------------------------------------
+
+def extract_meta_pattern(command, decision, quality):
+    return {
+        "mode": decision["mode"],
+        "length": len(command.split()),
+        "quality": quality
+    }
+
+
+# ------------------------------------------------------
+# GENERADOR DE PROPUESTAS (NO APLICA CAMBIOS)
+# ------------------------------------------------------
+
+def propose_meta_change(meta_pattern):
+    proposal = {
+        "id": str(uuid.uuid4()),
+        "suggested_change": None,
+        "reason": None,
+        "confidence": 0.0,
+        "status": "PENDING",
+        "timestamp": datetime.datetime.utcnow().isoformat()
+    }
+
+    if meta_pattern["quality"] < 2:
+        proposal["suggested_change"] = {
+            "increase_verification": True
+        }
+        proposal["reason"] = "Resultados débiles recurrentes"
+        proposal["confidence"] = 0.7
+
+    elif meta_pattern["mode"] == "SCIENTIFIC":
+        proposal["suggested_change"] = {
+            "increase_compute_limit": 20
+        }
+        proposal["reason"] = "Dominio científico frecuente"
+        proposal["confidence"] = 0.65
+
+    if proposal["suggested_change"]:
+        META_CHANGE_QUEUE.append(proposal)
+
+    return proposal
+
+
+# ------------------------------------------------------
+# BLOQUEO DE APLICACIÓN AUTOMÁTICA
+# ------------------------------------------------------
+
+def apply_meta_change(proposal_id, human_approval=False):
+    """
+    SOLO HUMANO puede aprobar.
+    """
+    for p in META_CHANGE_QUEUE:
+        if p["id"] == proposal_id:
+            if not human_approval:
+                return "⛔ CAMBIO BLOQUEADO — APROBACIÓN HUMANA REQUERIDA"
+
+            p["status"] = "APPROVED"
+
+            POLICY_VERSIONS.append({
+                "version": f"v{len(POLICY_VERSIONS)+1}.0",
+                "change": p["suggested_change"],
+                "timestamp": datetime.datetime.utcnow().isoformat()
+            })
+
+            return "✅ CAMBIO APLICADO CON APROBACIÓN HUMANA"
+
+    return "❌ PROPUESTA NO ENCONTRADA"
+
+
+# ------------------------------------------------------
+# AUDITORÍA TOTAL
+# ------------------------------------------------------
+
+def meta_audit_report():
+    return {
+        "current_policy": CURRENT_POLICY_VERSION,
+        "base_rules": BASE_POLICY_RULES,
+        "pending_proposals": len(META_CHANGE_QUEUE),
+        "approved_versions": len(POLICY_VERSIONS),
+        "meta_learning_enabled": META_LEARNING_ENABLED
+    }
+
+
+# ------------------------------------------------------
+# INTEGRACIÓN SEGURA CON AETHER
+# ------------------------------------------------------
+
+def aether_level_18_safe(command, decision, quality):
+    """
+    NIVEL 18:
+    - Observa
+    - Aprende patrones
+    - Sugiere mejoras
+    - NO actúa sin humano
+    """
+
+    if not META_LEARNING_ENABLED:
+        return """
+🔒 AETHER — NIVEL 18 BLOQUEADO
+Meta-aprendizaje DESACTIVADO por seguridad
+"""
+
+    meta_pattern = extract_meta_pattern(command, decision, quality)
+    proposal = propose_meta_change(meta_pattern)
+
+    return f"""
+🧠 AETHER — NIVEL 18 (META-APRENDIZAJE CONTROLADO)
+
+META-PATRÓN DETECTADO:
+- Modo: {meta_pattern['mode']}
+- Calidad: {meta_pattern['quality']}
+
+PROPUESTA:
+- Cambio sugerido: {proposal.get('suggested_change')}
+- Razón: {proposal.get('reason')}
+- Confianza: {proposal.get('confidence')}
+
+ESTADO:
+- NO APLICADO
+- REQUIERE APROBACIÓN HUMANA
+
+🔐 GARANTÍAS:
+- No se reescriben políticas automáticamente
+- No se modifican objetivos
+- No se altera ROOT_GOAL
+"""
 
 demo.launch()
 
