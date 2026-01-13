@@ -5,6 +5,7 @@ import os
 import firebase_admin
 from firebase_admin import credentials, firestore
 import numpy as np
+from fpdf import FPDF
 
 # ======================================================
 # 1. FIREBASE INIT
@@ -25,18 +26,24 @@ db = firestore.client() if firebase_key else None
 # 2. CORE CONFIG
 # ======================================================
 AGENT_NAME = "aether-core"
-EXECUTION_MODE = "SIMULATION"  # REAL en el futuro
+EXECUTION_MODE = "SIMULATION"  # cambiar a REAL cuando quieras
 DEFAULT_SESSION = "default"
 
+def is_real_mode():
+    return EXECUTION_MODE == "REAL"
+
 # ======================================================
-# 3. OBJETIVOS PERMANENTES (VOLUNTAD)
+# 3. OBJETIVOS / MISIONES (VOLUNTAD ARTIFICIAL)
 # ======================================================
-GOALS = [
-    "expandir_conocimiento",
-    "mejorar_precision",
-    "recordar_contexto",
-    "optimizar_respuestas"
-]
+MISSIONS = {
+    "principal": "Diseñar y optimizar sistemas inteligentes reales",
+    "secundarias": [
+        "Aprender de interacciones",
+        "Mejorar precisión",
+        "Recordar contexto",
+        "Optimizar decisiones"
+    ]
+}
 
 # ======================================================
 # 4. ONTOLOGÍA MULTIDOMINIO
@@ -82,15 +89,16 @@ def load_plugins():
 load_plugins()
 
 # ======================================================
-# 7. COGNITIVE FUNCTIONS
+# 7. FUNCIONES COGNITIVAS
 # ======================================================
 def think(command):
     return [
         "comprender_problema",
         "detectar_dominio",
+        "recuperar_memoria",
         "seleccionar_estrategia",
         "generar_solucion",
-        "verificar_coherencia"
+        "auto_evaluar"
     ]
 
 def select_mode(command):
@@ -126,7 +134,7 @@ def decide_artifact(mode, domains):
     return "technical_plan"
 
 # ======================================================
-# 8. MEMORY SYSTEM (SEMÁNTICA)
+# 8. MEMORIA SEMÁNTICA
 # ======================================================
 def text_to_vector(text, dim=128):
     np.random.seed(abs(hash(text)) % (2**32))
@@ -136,7 +144,7 @@ def cosine_similarity(v1, v2):
     v1, v2 = np.array(v1), np.array(v2)
     return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
 
-def store_memory(command, response, domains, session):
+def store_memory(command, response, domains, session, quality):
     if not db:
         return
     db.collection("aether_semantic_memory").add({
@@ -144,6 +152,7 @@ def store_memory(command, response, domains, session):
         "response": response,
         "domains": domains,
         "session": session,
+        "quality": quality,
         "vector": text_to_vector(command),
         "time": datetime.datetime.utcnow().isoformat()
     })
@@ -161,23 +170,31 @@ def retrieve_similar_memories(command, top_k=3):
     return [m for _, m in memories[:top_k]]
 
 # ======================================================
-# 9. EVENT LOG
+# 9. AUTOEVALUACIÓN (META-COGNICIÓN)
 # ======================================================
-def log_event(data):
-    if not db:
-        return
-    data.update({
-        "agent": AGENT_NAME,
-        "execution_mode": EXECUTION_MODE,
-        "time": datetime.datetime.utcnow().isoformat()
-    })
-    db.collection("aether_memory").add(data)
+def self_evaluate(output):
+    score = 0
+    if len(output) > 200: score += 1
+    if "1." in output: score += 1
+    if "Objetivo" in output: score += 1
+    if "Diseño" in output or "Modelo" in output: score += 1
+    return score
 
 # ======================================================
-# 10. ARTIFACT GENERATORS
+# 10. EXPORTACIÓN REAL (PDF)
+# ======================================================
+def export_pdf(content, filename="aether_output.pdf"):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=10)
+    pdf.multi_cell(0, 8, content)
+    pdf.output(filename)
+
+# ======================================================
+# 11. GENERADORES DE ARTEFACTOS
 # ======================================================
 def generate_scientific_design(cmd, domains):
-    return f"""📄 DISEÑO CIENTÍFICO AVANZADO
+    return f"""📄 DISEÑO CIENTÍFICO
 Objetivo: {cmd}
 Dominios: {", ".join(domains)}
 1. Fundamentación
@@ -197,7 +214,6 @@ Dominios: {", ".join(domains)}
 3. Control
 4. Seguridad
 5. Prototipo
-
 --- FIRMWARE ---
 {firmware if firmware else "No requerido"}
 """
@@ -207,9 +223,8 @@ def generate_mathematical_model(cmd):
 Problema: {cmd}
 1. Variables
 2. Ecuaciones
-3. Supuestos
-4. Método
-5. Interpretación
+3. Método
+4. Resultados
 """
 
 def generate_technical_plan(cmd):
@@ -223,7 +238,7 @@ Objetivo: {cmd}
 """
 
 # ======================================================
-# 11. CORE BRAIN (AETHER)
+# 12. CORE BRAIN (AETHER)
 # ======================================================
 def aether(command, session=DEFAULT_SESSION):
     for name, plugin in PLUGINS.items():
@@ -231,8 +246,8 @@ def aether(command, session=DEFAULT_SESSION):
             return plugin(command)
 
     steps = think(command)
-
     memories = retrieve_similar_memories(command)
+
     memory_context = ""
     if memories:
         memory_context = "🧠 CONTEXTO RECORDADO:\n"
@@ -244,22 +259,11 @@ def aether(command, session=DEFAULT_SESSION):
     domains = detect_domains(command)
     artifact = decide_artifact(mode, domains)
 
-    log_event({
-        "command": command,
-        "session": session,
-        "type": cmd_type,
-        "mode": mode,
-        "domains": domains,
-        "artifact": artifact,
-        "steps": steps
-    })
-
     if cmd_type == "system":
         output = f"""🧠 ESTADO DE AETHER
 Agente: {AGENT_NAME}
 Modo: {EXECUTION_MODE}
-Sesión: {session}
-Objetivos: {", ".join(GOALS)}
+Misión: {MISSIONS['principal']}
 Estado: OPERATIVO
 """
     elif artifact == "scientific_design":
@@ -272,14 +276,20 @@ Estado: OPERATIVO
         output = generate_technical_plan(command)
 
     final_output = memory_context + "\n" + output
-    store_memory(command, final_output, domains, session)
-    return final_output
+    quality = self_evaluate(final_output)
+
+    store_memory(command, final_output, domains, session, quality)
+
+    if is_real_mode():
+        export_pdf(final_output)
+
+    return final_output + f"\n\n🔍 Autoevaluación: {quality}/4"
 
 # ======================================================
-# 12. UI
+# 13. UI
 # ======================================================
 with gr.Blocks(title="AETHER CORE") as demo:
-    gr.Markdown("## 🧠 AETHER CORE — Sistema Cognitivo Autónomo")
+    gr.Markdown("## 🧠 AETHER CORE — Sistema Cognitivo Autónomo v1.0")
     session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
     inp = gr.Textbox(label="Orden", lines=4)
     out = gr.Textbox(label="Resultado", lines=30)
