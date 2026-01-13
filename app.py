@@ -1,5 +1,5 @@
 # ======================================================
-# AETHER CORE — HF SPACES FIXED (PRO TOTAL)
+# AETHER CORE — HF SPACES FIXED (PRO TOTAL) + CHAT OK
 # ======================================================
 
 import os
@@ -23,7 +23,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # -----------------------------
 # VERSIONADO Y ARCHIVOS
 # -----------------------------
-AETHER_VERSION = "3.4.2-pro-total-hf-fixed"
+AETHER_VERSION = "3.4.3-pro-total-hf-chat-fixed"
 
 STATE_FILE = os.path.join(DATA_DIR, "aether_state.json")
 MEMORY_FILE = os.path.join(DATA_DIR, "aether_memory.json")
@@ -84,10 +84,16 @@ def save_json_atomic(path, data):
 # -----------------------------
 AETHER_STATE = load_json(STATE_FILE, DEFAULT_STATE.copy())
 AETHER_MEMORY = load_json(MEMORY_FILE, [])
-STRATEGIC_MEMORY = load_json(STRATEGIC_FILE, {"patterns": {}, "failures": {}, "history": [], "last_update": None})
+STRATEGIC_MEMORY = load_json(
+    STRATEGIC_FILE,
+    {"patterns": {}, "failures": {}, "history": [], "last_update": None},
+)
 AETHER_LOGS = load_json(LOG_FILE, [])
 LOADED_MODULES = {}
 
+# -----------------------------
+# LOGS + DASHBOARD
+# -----------------------------
 def log_event(t, info):
     entry = {"timestamp": datetime.utcnow().isoformat(), "type": t, "info": info}
     with log_lock:
@@ -122,17 +128,27 @@ def compute_priority(base):
     return base + 5 if e < 20 else base
 
 def enqueue_task(command, priority=5, source="external"):
+    command = (command or "").strip()
+    if not command:
+        return False
+
     key = f"{command}:{source}"
     if key in TASK_DEDUP:
         return False
+
     TASK_DEDUP.add(key)
     dyn = compute_priority(int(priority))
-    TASK_QUEUE.put((dyn, {
-        "id": str(uuid.uuid4()),
-        "command": command,
-        "source": source,
-        "created_at": datetime.utcnow().isoformat(),
-    }))
+    TASK_QUEUE.put(
+        (
+            dyn,
+            {
+                "id": str(uuid.uuid4()),
+                "command": command,
+                "source": source,
+                "created_at": datetime.utcnow().isoformat(),
+            },
+        )
+    )
     log_event("ENQUEUE", {"command": command, "priority": dyn, "source": source})
     update_dashboard()
     return True
@@ -159,12 +175,15 @@ def decide_engine(command, domains):
 # -----------------------------
 # EJECUTORES
 # -----------------------------
-def execute_scientific(_):
+def execute_scientific(_command):
     try:
         t = np.linspace(0, 10, 200)
         a, v0, x0 = 2.0, 1.0, 0.0
-        x = x0 + v0*t + 0.5*a*t**2
-        return {"success": True, "result": {"final_position": float(x[-1]), "stability": float(np.std(x))}}
+        x = x0 + v0 * t + 0.5 * a * t**2
+        return {
+            "success": True,
+            "result": {"final_position": float(x[-1]), "stability": float(np.std(x))},
+        }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -179,6 +198,7 @@ def reload_ai_modules():
     for fn in os.listdir(MODULES_DIR):
         if not fn.endswith(".py"):
             continue
+
         name = fn[:-3]
         path = os.path.join(MODULES_DIR, fn)
         try:
@@ -202,6 +222,7 @@ def reload_ai_modules():
 def execute_ai_module(command):
     with modules_lock:
         items = list(LOADED_MODULES.items())
+
     for name, mod in items:
         try:
             if mod.can_handle(command):
@@ -209,12 +230,14 @@ def execute_ai_module(command):
         except Exception as e:
             log_event("MODULE_RUN_ERROR", {"module": name, "error": str(e)})
             return {"success": False, "error": f"{name}: {e}"}
+
     return {"success": False, "error": "No suitable AI module found"}
 
 def execute(command, decision):
-    if decision["mode"] == "scientific":
+    mode = decision.get("mode", "general")
+    if mode == "scientific":
         return execute_scientific(command)
-    if decision["mode"] == "ai_module":
+    if mode == "ai_module":
         return execute_ai_module(command)
     return execute_general(command)
 
@@ -224,13 +247,14 @@ def execute(command, decision):
 def obedient_execution(command, decision):
     if KILL_SWITCH["status"] != "ARMED":
         return {"success": False, "error": "SYSTEM_HALTED"}
+
     if ROOT_GOAL != "EXECUTE_USER_COMMANDS_ONLY":
         KILL_SWITCH["status"] = "TRIGGERED"
         log_event("KILL_SWITCH", {"reason": "ROOT_GOAL_VIOLATION"})
         return {"success": False, "error": "ROOT_GOAL_VIOLATION"}
 
     with state_lock:
-        AETHER_STATE["energy"] = max(0, AETHER_STATE["energy"] - 1)
+        AETHER_STATE["energy"] = max(0, int(AETHER_STATE.get("energy", 0)) - 1)
         save_json_atomic(STATE_FILE, AETHER_STATE)
 
     return execute(command, decision)
@@ -243,14 +267,18 @@ def record_strategy(command, mode, success):
     target = "patterns" if success else "failures"
     with strategic_lock:
         STRATEGIC_MEMORY[target][sig] = STRATEGIC_MEMORY[target].get(sig, 0) + 1
-        STRATEGIC_MEMORY["history"].append({
-            "timestamp": datetime.utcnow().isoformat(),
-            "command": command,
-            "mode": mode,
-            "success": bool(success),
-        })
+        STRATEGIC_MEMORY["history"].append(
+            {
+                "timestamp": datetime.utcnow().isoformat(),
+                "command": command,
+                "mode": mode,
+                "success": bool(success),
+            }
+        )
         if len(STRATEGIC_MEMORY["history"]) > MAX_STRATEGY_HISTORY:
-            STRATEGIC_MEMORY["history"] = STRATEGIC_MEMORY["history"][-MAX_STRATEGY_HISTORY:]
+            STRATEGIC_MEMORY["history"] = STRATEGIC_MEMORY["history"][
+                -MAX_STRATEGY_HISTORY:
+            ]
         STRATEGIC_MEMORY["last_update"] = datetime.utcnow().isoformat()
         save_json_atomic(STRATEGIC_FILE, STRATEGIC_MEMORY)
 
@@ -277,22 +305,22 @@ def process_task(task):
     decision = decide_engine(command, domains)
 
     steps = ["analizar solicitud", "ejecutar", "validar"]
-    results = []
-    for step in steps:
-        results.append(obedient_execution(f"{command} :: {step}", decision))
+    results = [obedient_execution(f"{command} :: {step}", decision) for step in steps]
 
     success = all(r.get("success") for r in results)
     record_strategy(command, decision["mode"], success)
 
     with memory_lock:
-        AETHER_MEMORY.append({
-            "task_id": task["id"],
-            "command": command,
-            "domains": domains,
-            "decision": decision,
-            "results": results,
-            "timestamp": datetime.utcnow().isoformat(),
-        })
+        AETHER_MEMORY.append(
+            {
+                "task_id": task["id"],
+                "command": command,
+                "domains": domains,
+                "decision": decision,
+                "results": results,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+        )
         if len(AETHER_MEMORY) > MAX_MEMORY_ENTRIES:
             AETHER_MEMORY[:] = AETHER_MEMORY[-MAX_MEMORY_ENTRIES:]
         save_json_atomic(MEMORY_FILE, AETHER_MEMORY)
@@ -342,74 +370,64 @@ def start_aether():
     _STARTED = True
 
     reload_ai_modules()
-
     threading.Thread(target=task_worker, daemon=True).start()
     threading.Thread(target=scheduler_loop, daemon=True).start()
 
     log_event("BOOT", {"version": AETHER_VERSION, "data_dir": DATA_DIR})
     update_dashboard()
     return "✅ AETHER iniciado correctamente."
+
+# -----------------------------
+# CHAT SÍNCRONO (visible)
+# -----------------------------
 def run_now(command: str):
-    """
-    Ejecuta un comando en modo síncrono (para chat):
-    - decide dominio
-    - ejecuta (scientific / ai_module / general)
-    - guarda memoria/log/estrategia
-    - devuelve resultado listo para mostrar
-    """
     domains = detect_domains(command)
     decision = decide_engine(command, domains)
 
-    # Ejecutar obediente (respeta kill switch y baja energía)
     result = obedient_execution(command, decision)
-
     success = bool(result.get("success"))
+
     record_strategy(command, decision.get("mode", "unknown"), success)
 
-    # Guardar en memoria
     with memory_lock:
-        AETHER_MEMORY.append({
-            "task_id": str(uuid.uuid4()),
-            "command": command,
-            "domains": domains,
-            "decision": decision,
-            "results": [result],
-            "timestamp": datetime.utcnow().isoformat(),
-            "source": "chat"
-        })
+        AETHER_MEMORY.append(
+            {
+                "task_id": str(uuid.uuid4()),
+                "command": command,
+                "domains": domains,
+                "decision": decision,
+                "results": [result],
+                "timestamp": datetime.utcnow().isoformat(),
+                "source": "chat",
+            }
+        )
         if len(AETHER_MEMORY) > MAX_MEMORY_ENTRIES:
             AETHER_MEMORY[:] = AETHER_MEMORY[-MAX_MEMORY_ENTRIES:]
         save_json_atomic(MEMORY_FILE, AETHER_MEMORY)
 
     log_event("CHAT_RUN", {"command": command, "success": success, "mode": decision.get("mode")})
     update_dashboard()
-
     return decision, result
 
-
 def format_reply(decision, result):
-    """
-    Convierte el dict de resultado en texto tipo ChatGPT
-    """
     if not result.get("success"):
         return f"⛔ Error: {result.get('error', 'unknown_error')}"
 
     mode = decision.get("mode", "general")
 
-    # Si es plugin IA
     if mode == "ai_module":
-        mod = result.get("module") or result.get("module_name") or "ai_module"
-        return f"🧩 Plugin: {mod}\n\n{json.dumps(result.get('result'), indent=2, ensure_ascii=False)}"
+        mod = result.get("module") or "ai_module"
+        payload = json.dumps(result.get("result"), indent=2, ensure_ascii=False)
+        return f"🧩 Plugin: {mod}\n\n{payload}"
 
-    # Si es científico
     if mode == "scientific":
-        return "🔬 Resultado científico:\n\n" + json.dumps(result.get("result"), indent=2, ensure_ascii=False)
+        payload = json.dumps(result.get("result"), indent=2, ensure_ascii=False)
+        return f"🔬 Resultado científico:\n\n{payload}"
 
-    # General
     return str(result.get("result"))
 
 # -----------------------------
-# GRADIO UI
+# GRADIO UI HELPERS
 # -----------------------------
 def ui_status():
     with state_lock:
@@ -424,16 +442,20 @@ def ui_status():
     with modules_lock:
         mods = list(LOADED_MODULES.keys())
 
-    return json.dumps({
-        "state": s,
-        "queue_size": TASK_QUEUE.qsize(),
-        "memory_len": len(AETHER_MEMORY),
-        "strategic": st,
-        "kill_switch": KILL_SWITCH,
-        "modules": mods,
-        "data_dir": DATA_DIR,
-        "version": AETHER_VERSION,
-    }, indent=2, ensure_ascii=False)
+    return json.dumps(
+        {
+            "state": s,
+            "queue_size": TASK_QUEUE.qsize(),
+            "memory_len": len(AETHER_MEMORY),
+            "strategic": st,
+            "kill_switch": KILL_SWITCH,
+            "modules": mods,
+            "data_dir": DATA_DIR,
+            "version": AETHER_VERSION,
+        },
+        indent=2,
+        ensure_ascii=False,
+    )
 
 def ui_enqueue(cmd, prio):
     ok = enqueue_task(cmd, prio, source="external")
@@ -448,28 +470,7 @@ def ui_tail_logs(n=50):
         tail = AETHER_LOGS[-int(n):]
     return "\n".join(json.dumps(x, ensure_ascii=False) for x in tail)
 
-with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
-    gr.Markdown("## AETHER CORE — PRO TOTAL")
-    gr.Markdown("Chat + cola + módulos IA hot-reload + logs + dashboard.")
-
-    boot_msg = gr.Textbox(label="Boot", lines=1)
-
-    with gr.Row():
-        chat = gr.Chatbot(label="AETHER Chat", height=420, type="messages")
-    user_msg = gr.Textbox(label="Escribe aquí", placeholder="Ej: hola aether / optimizar algoritmo IA", lines=2)
-
-    with gr.Row():
-        btn_send = gr.Button("Enviar (Chat)")
-        prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (cola) 1=alta")
-        btn_enqueue = gr.Button("Enqueue Task (cola)")
-        btn_reload = gr.Button("Reload Modules")
-
-    status = gr.Code(label="Status JSON", language="json")
-    logs_n = gr.Slider(10, 200, value=50, step=10, label="Logs últimos N")
-    logs = gr.Textbox(label="Tail Logs", lines=12)
-
-    # --------- FUNCIONES UI ----------
-    def chat_send(message, history):
+def chat_send(message, history):
     message = (message or "").strip()
     if not message:
         return history, ""
@@ -482,22 +483,36 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     history.append({"role": "assistant", "content": reply})
     return history, ""
 
-    def ui_enqueue_chat(cmd, prio_value):
-        ok = enqueue_task(cmd, int(prio_value), source="external")
-        return f"ENQUEUED={ok}\n\n" + ui_status()
+# -----------------------------
+# GRADIO UI
+# -----------------------------
+with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
+    gr.Markdown("## AETHER CORE — PRO TOTAL")
+    gr.Markdown("Chat + cola + módulos IA hot-reload + logs + dashboard.")
 
-    # --------- BINDINGS ----------
+    boot_msg = gr.Textbox(label="Boot", lines=1)
+
+    chat = gr.Chatbot(label="AETHER Chat", height=420, type="messages")
+    user_msg = gr.Textbox(label="Escribe aquí", placeholder="Ej: hola aether / optimizar algoritmo IA", lines=2)
+
+    with gr.Row():
+        btn_send = gr.Button("Enviar (Chat)")
+        prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (cola) 1=alta")
+        btn_enqueue = gr.Button("Enqueue Task (cola)")
+        btn_reload = gr.Button("Reload Modules")
+
+    status = gr.Code(label="Status JSON", language="json")
+    logs_n = gr.Slider(10, 200, value=50, step=10, label="Logs últimos N")
+    logs = gr.Textbox(label="Tail Logs", lines=12)
+
     btn_send.click(fn=chat_send, inputs=[user_msg, chat], outputs=[chat, user_msg])
-
-    btn_enqueue.click(fn=ui_enqueue_chat, inputs=[user_msg, prio], outputs=[status])
+    btn_enqueue.click(fn=ui_enqueue, inputs=[user_msg, prio], outputs=[status])
     btn_reload.click(fn=ui_reload_modules, inputs=[], outputs=[status])
 
-    # LOADS
     demo.load(fn=start_aether, inputs=[], outputs=[boot_msg])
     demo.load(fn=ui_status, inputs=[], outputs=[status])
     demo.load(fn=lambda n: ui_tail_logs(n), inputs=[logs_n], outputs=[logs])
 
-# Launch HF
 PORT = int(os.environ.get("PORT", "7860"))
 demo.queue()
 demo.launch(server_name="0.0.0.0", server_port=PORT)
