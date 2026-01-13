@@ -1,11 +1,10 @@
 def run(command):
-    return f"""🎬 PLUGIN VIDEO ACTIVADO
-Orden: {command}
+    return f"""🎬 AETHER VIDEO ENGINE
+Objetivo: {command}
 
-✔ Generando storyboard
-✔ Estilo: cinematográfico
-✔ Música: electrónica suave
-✔ Duración estimada: 2:30
-
-Estado: listo para render
+1. Concepto visual
+2. Guion
+3. Estilo
+4. Storyboard
+5. Render (pendiente de motor real)
 """
