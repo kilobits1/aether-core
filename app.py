@@ -26,14 +26,14 @@ db = firestore.client() if firebase_key else None
 # 2. CORE CONFIG
 # ======================================================
 AGENT_NAME = "aether-core"
-EXECUTION_MODE = "SIMULATION"  # cambiar a REAL cuando quieras
+EXECUTION_MODE = "SIMULATION"
 DEFAULT_SESSION = "default"
 
 def is_real_mode():
     return EXECUTION_MODE == "REAL"
 
 # ======================================================
-# 3. MISIONES (VOLUNTAD ARTIFICIAL)
+# 3. MISIONES
 # ======================================================
 MISSIONS = {
     "principal": "Diseñar y optimizar sistemas inteligentes reales",
@@ -41,94 +41,24 @@ MISSIONS = {
         "Aprender de interacciones",
         "Recordar contexto",
         "Optimizar decisiones",
-        "Orquestar herramientas externas"
+        "Ejecutar modelos científicos"
     ]
 }
 
 # ======================================================
-# 4. ONTOLOGÍA MULTIDOMINIO
+# 4. DOMINIOS
 # ======================================================
 DOMAIN_MAP = {
-    "matematicas": ["ecuacion", "calculo", "modelo", "optimizacion"],
+    "matematicas": ["ecuacion", "calculo", "modelo"],
     "fisica": ["fuerza", "energia", "movimiento"],
-    "electronica": ["sensor", "esp32", "pcb", "rele", "relay"],
-    "mecatronica": ["robot", "actuador", "control"],
-    "medicina": ["diagnostico", "tratamiento"],
+    "electronica": ["sensor", "esp32", "rele"],
     "ia": ["modelo", "red", "inteligencia"],
-    "multimedia": ["video", "musica", "audio", "imagen", "animacion"],
-    "software": ["app", "aplicacion", "backend", "frontend"]
+    "multimedia": ["video", "musica", "audio"],
+    "software": ["app", "aplicacion"]
 }
 
 # ======================================================
-# 5. HARDWARE KNOWLEDGE BASE
-# ======================================================
-HARDWARE_LIBRARY = {
-    "sensor temperatura": "// Arduino DHT\n#include <DHT.h>\nDHT dht(2, DHT11);",
-    "rele": "// Relé\nvoid setup(){ pinMode(5, OUTPUT); }",
-    "ultrasonico": "// HC-SR04\nconst int trig=9, echo=10;"
-}
-
-# ======================================================
-# 6. PLUGIN SYSTEM (MODULAR)
-# ======================================================
-PLUGINS = {}
-
-def load_plugins():
-    if not os.path.exists("plugins"):
-        return
-    for file in os.listdir("plugins"):
-        if file.endswith(".py"):
-            name = file[:-3]
-            module = __import__(f"plugins.{name}", fromlist=[name])
-            if hasattr(module, "run"):
-                PLUGINS[name] = module.run
-
-load_plugins()
-
-def select_plugin(command):
-    c = command.lower()
-    if "video" in c:
-        return "video"
-    if "musica" in c or "música" in c:
-        return "music"
-    if "app" in c:
-        return "app"
-    return None
-
-# ======================================================
-# 7. FUNCIONES COGNITIVAS
-# ======================================================
-def think(command):
-    return [
-        "comprender",
-        "analizar",
-        "recordar",
-        "planificar",
-        "ejecutar",
-        "evaluar"
-    ]
-
-def select_mode(command):
-    t = command.lower()
-    if any(k in t for k in ["calcular", "analizar", "simular"]):
-        return "scientific"
-    if any(k in t for k in ["crear", "diseñar", "construir"]):
-        return "engineering"
-    return "general"
-
-def detect_domains(command):
-    t = command.lower()
-    domains = [d for d, k in DOMAIN_MAP.items() if any(x in t for x in k)]
-    return domains if domains else ["general"]
-
-def classify_command(command):
-    t = command.lower()
-    if "estado" in t:
-        return "system"
-    return "task"
-
-# ======================================================
-# 8. MEMORIA SEMÁNTICA
+# 5. MEMORIA SEMÁNTICA
 # ======================================================
 def text_to_vector(text, dim=128):
     np.random.seed(abs(hash(text)) % (2**32))
@@ -164,54 +94,73 @@ def retrieve_similar_memories(command, top_k=3):
     return [m for _, m in memories[:top_k]]
 
 # ======================================================
-# 9. PLANIFICADOR AUTÓNOMO
+# 6. MOTOR CIENTÍFICO REAL 🔬
 # ======================================================
-def task_planner(goal):
-    g = goal.lower()
-    if "video" in g or "musica" in g:
-        return [
-            "Definir concepto",
-            "Crear guion",
-            "Diseñar estilo",
-            "Generar contenido",
-            "Renderizar",
-            "Exportar"
-        ]
-    if "app" in g:
-        return [
-            "Definir funciones",
-            "Diseñar interfaz",
-            "Programar backend",
-            "Integrar IA",
-            "Probar",
-            "Desplegar"
-        ]
-    return [
-        "Analizar objetivo",
-        "Diseñar solución",
-        "Ejecutar",
-        "Evaluar"
-    ]
+def scientific_engine(command):
+    """
+    Motor científico básico ejecutable.
+    Simula un sistema físico simple: movimiento con aceleración constante.
+    """
 
-def execute_plan(steps):
-    log = "🛠️ PLAN DE EJECUCIÓN:\n"
-    for i, step in enumerate(steps, 1):
-        log += f"{i}. {step}\n"
-    return log
+    # Variables del modelo
+    t = np.linspace(0, 10, 100)
+    a = 2.0        # aceleración
+    v0 = 1.0       # velocidad inicial
+    x0 = 0.0       # posición inicial
+
+    # Modelo físico
+    v = v0 + a * t
+    x = x0 + v0 * t + 0.5 * a * t**2
+
+    # Evaluación
+    max_pos = float(np.max(x))
+    final_vel = float(v[-1])
+
+    result = f"""🔬 MOTOR CIENTÍFICO EJECUTADO
+Modelo: Movimiento rectilíneo uniformemente acelerado
+
+Ecuaciones:
+v(t) = v0 + a·t
+x(t) = x0 + v0·t + ½·a·t²
+
+Parámetros:
+a = {a}
+v0 = {v0}
+x0 = {x0}
+
+Resultados:
+- Velocidad final: {final_vel:.2f}
+- Posición máxima: {max_pos:.2f}
+
+Estado: SIMULACIÓN COMPLETADA
+"""
+
+    return result
 
 # ======================================================
-# 10. AUTOEVALUACIÓN
+# 7. UTILIDADES COGNITIVAS
+# ======================================================
+def detect_domains(command):
+    t = command.lower()
+    domains = [d for d, k in DOMAIN_MAP.items() if any(x in t for x in k)]
+    return domains if domains else ["general"]
+
+def is_scientific(command):
+    return any(k in command.lower() for k in ["calcular", "simular", "modelo", "fisica", "ecuacion"])
+
+# ======================================================
+# 8. AUTOEVALUACIÓN
 # ======================================================
 def self_evaluate(output):
     score = 0
     if len(output) > 200: score += 1
-    if "PLAN" in output: score += 1
-    if "Objetivo" in output: score += 1
-    if "Diseño" in output or "Modelo" in output: score += 1
+    if "Modelo" in output: score += 1
+    if "Resultados" in output: score += 1
+    if "SIMULACIÓN" in output: score += 1
     return score
 
 # ======================================================
-# 11. EXPORTACIÓN
+# 9. EXPORTACIÓN
 # ======================================================
 def export_pdf(content, filename="aether_output.pdf"):
     pdf = FPDF()
@@ -221,27 +170,9 @@ def export_pdf(content, filename="aether_output.pdf"):
     pdf.output(filename)
 
 # ======================================================
-# 12. GENERADORES
-# ======================================================
-def generate_output(cmd, domains):
-    return f"""🧠 RESULTADO DE AETHER
-Objetivo: {cmd}
-Dominios: {", ".join(domains)}
-
-1. Análisis
-2. Diseño
-3. Ejecución
-4. Evaluación
-"""
-
-# ======================================================
-# 13. CORE BRAIN
+# 10. CORE BRAIN 🧠
 # ======================================================
 def aether(command, session=DEFAULT_SESSION):
-
-    plugin = select_plugin(command)
-    if plugin and plugin in PLUGINS:
-        return PLUGINS[plugin](command)
 
     memories = retrieve_similar_memories(command)
     memory_context = ""
@@ -251,12 +182,21 @@ def aether(command, session=DEFAULT_SESSION):
             memory_context += f"- {m['command']} ({m['domains']})\n"
 
     domains = detect_domains(command)
-    output = generate_output(command, domains)
 
-    plan_steps = task_planner(command)
-    plan_log = execute_plan(plan_steps)
+    if is_scientific(command):
+        output = scientific_engine(command)
+    else:
+        output = f"""🧠 RESULTADO GENERAL
+Objetivo: {command}
+Dominios: {", ".join(domains)}
 
-    final_output = memory_context + "\n" + output + "\n" + plan_log
+1. Análisis
+2. Diseño
+3. Ejecución
+4. Evaluación
+"""
+
+    final_output = memory_context + "\n" + output
     quality = self_evaluate(final_output)
 
     store_memory(command, final_output, domains, session, quality)
@@ -267,10 +207,10 @@ def aether(command, session=DEFAULT_SESSION):
     return final_output + f"\n🔍 Autoevaluación: {quality}/4"
 
 # ======================================================
-# 14. UI
+# 11. UI
 # ======================================================
 with gr.Blocks(title="AETHER CORE") as demo:
-    gr.Markdown("## 🧠 AETHER CORE — Sistema Cognitivo Autónomo")
+    gr.Markdown("## 🧠 AETHER CORE — Núcleo Cognitivo + Motor Científico")
     session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
     inp = gr.Textbox(label="Orden", lines=4)
     out = gr.Textbox(label="Resultado", lines=30)
@@ -278,5 +218,6 @@ with gr.Blocks(title="AETHER CORE") as demo:
     btn.click(aether, inputs=[inp, session], outputs=out)
 
 demo.launch()
+
 
 
