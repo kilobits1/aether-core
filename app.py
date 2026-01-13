@@ -1,10 +1,5 @@
 # ======================================================
-# AETHER CORE — VERSIÓN PRO TOTAL (HF Spaces OK)
-# - Thread-safe SIN deadlocks
-# - Logs + dashboard JSON
-# - Prioridad dinámica por energía
-# - Módulos IA hot-reload (modules/*.py)
-# - Gradio UI (necesario para HF)
+# AETHER CORE — HF SPACES FIXED (PRO TOTAL)
 # ======================================================
 
 import os
@@ -19,26 +14,33 @@ from datetime import datetime
 import numpy as np
 import gradio as gr
 
-# ======================================================
+# -----------------------------
+# DIRECTORIO DE DATOS (HF-safe)
+# -----------------------------
+DATA_DIR = os.environ.get("AETHER_DATA_DIR", "/tmp/aether")
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# -----------------------------
 # VERSIONADO Y ARCHIVOS
-# ======================================================
-AETHER_VERSION = "3.4.1-pro-total-hf"
+# -----------------------------
+AETHER_VERSION = "3.4.2-pro-total-hf-fixed"
 
-STATE_FILE = "aether_state.json"
-MEMORY_FILE = "aether_memory.json"
-STRATEGIC_FILE = "aether_strategic.json"
-LOG_FILE = "aether_log.json"
-DASHBOARD_FILE = "aether_dashboard.json"
+STATE_FILE = os.path.join(DATA_DIR, "aether_state.json")
+MEMORY_FILE = os.path.join(DATA_DIR, "aether_memory.json")
+STRATEGIC_FILE = os.path.join(DATA_DIR, "aether_strategic.json")
+LOG_FILE = os.path.join(DATA_DIR, "aether_log.json")
+DASHBOARD_FILE = os.path.join(DATA_DIR, "aether_dashboard.json")
 
-MODULES_DIR = "modules"
+MODULES_DIR = "modules"  # dentro del repo
+os.makedirs(MODULES_DIR, exist_ok=True)
 
 MAX_MEMORY_ENTRIES = 500
 MAX_LOG_ENTRIES = 1000
 MAX_STRATEGY_HISTORY = 1000
 
-# ======================================================
+# -----------------------------
 # ESTADO GLOBAL
-# ======================================================
+# -----------------------------
 DEFAULT_STATE = {
     "id": "AETHER",
     "version": AETHER_VERSION,
@@ -52,18 +54,18 @@ DEFAULT_STATE = {
 ROOT_GOAL = "EXECUTE_USER_COMMANDS_ONLY"
 KILL_SWITCH = {"enabled": True, "status": "ARMED"}
 
-# ======================================================
-# LOCKS (NO reentrantes; evitar lock dentro de lock)
-# ======================================================
+# -----------------------------
+# LOCKS
+# -----------------------------
 memory_lock = threading.Lock()
 log_lock = threading.Lock()
 state_lock = threading.Lock()
 strategic_lock = threading.Lock()
 modules_lock = threading.Lock()
 
-# ======================================================
-# IO JSON ATÓMICO (sin locks adentro)
-# ======================================================
+# -----------------------------
+# JSON IO (atómico)
+# -----------------------------
 def load_json(path, default):
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -72,97 +74,80 @@ def load_json(path, default):
         return default
 
 def save_json_atomic(path, data):
-    tmp_path = f"{path}.tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(tmp_path, path)
+    os.replace(tmp, path)
 
-# ======================================================
+# -----------------------------
 # CARGA INICIAL
-# ======================================================
+# -----------------------------
 AETHER_STATE = load_json(STATE_FILE, DEFAULT_STATE.copy())
 AETHER_MEMORY = load_json(MEMORY_FILE, [])
 STRATEGIC_MEMORY = load_json(STRATEGIC_FILE, {"patterns": {}, "failures": {}, "history": [], "last_update": None})
 AETHER_LOGS = load_json(LOG_FILE, [])
 LOADED_MODULES = {}
 
-# ======================================================
-# HELPERS DE GUARDADO (lock afuera, write adentro)
-# ======================================================
-def save_state_locked():
-    save_json_atomic(STATE_FILE, AETHER_STATE)
-
-def save_memory_locked():
-    save_json_atomic(MEMORY_FILE, AETHER_MEMORY)
-
-def save_logs_locked():
-    save_json_atomic(LOG_FILE, AETHER_LOGS)
-
-def save_strategic_locked():
-    save_json_atomic(STRATEGIC_FILE, STRATEGIC_MEMORY)
-
-# ======================================================
-# LOGS + DASHBOARD
-# ======================================================
-def log_event(event_type, info):
-    entry = {"timestamp": datetime.utcnow().isoformat(), "type": event_type, "info": info}
+def log_event(t, info):
+    entry = {"timestamp": datetime.utcnow().isoformat(), "type": t, "info": info}
     with log_lock:
         AETHER_LOGS.append(entry)
         if len(AETHER_LOGS) > MAX_LOG_ENTRIES:
             AETHER_LOGS[:] = AETHER_LOGS[-MAX_LOG_ENTRIES:]
-        save_logs_locked()
+        save_json_atomic(LOG_FILE, AETHER_LOGS)
 
 def update_dashboard():
     with state_lock:
-        snapshot = {
-            "energy": AETHER_STATE["energy"],
-            "focus": AETHER_STATE["focus"],
-            "status": AETHER_STATE["status"],
-            "last_cycle": AETHER_STATE["last_cycle"],
-        }
-    snapshot["queue_size"] = TASK_QUEUE.qsize()
-    save_json_atomic(DASHBOARD_FILE, snapshot)
+        snap = dict(AETHER_STATE)
+    dash = {
+        "energy": snap["energy"],
+        "focus": snap["focus"],
+        "status": snap["status"],
+        "queue_size": TASK_QUEUE.qsize(),
+        "last_cycle": snap["last_cycle"],
+        "version": AETHER_VERSION,
+        "data_dir": DATA_DIR,
+    }
+    save_json_atomic(DASHBOARD_FILE, dash)
 
-# ======================================================
-# COLA DE TAREAS (prioridad dinámica)
-# ======================================================
+# -----------------------------
+# COLA DE TAREAS
+# -----------------------------
 TASK_QUEUE = PriorityQueue()
 TASK_DEDUP = set()
 
-def compute_priority(base_priority):
+def compute_priority(base):
     with state_lock:
-        energy = AETHER_STATE["energy"]
-    return base_priority + 5 if energy < 20 else base_priority
+        e = AETHER_STATE["energy"]
+    return base + 5 if e < 20 else base
 
 def enqueue_task(command, priority=5, source="external"):
     key = f"{command}:{source}"
     if key in TASK_DEDUP:
         return False
     TASK_DEDUP.add(key)
-    dyn_priority = compute_priority(priority)
-    TASK_QUEUE.put((dyn_priority, {
+    dyn = compute_priority(int(priority))
+    TASK_QUEUE.put((dyn, {
         "id": str(uuid.uuid4()),
         "command": command,
         "source": source,
-        "created_at": datetime.utcnow().isoformat()
+        "created_at": datetime.utcnow().isoformat(),
     }))
-    log_event("ENQUEUE", {"command": command, "priority": dyn_priority, "source": source})
+    log_event("ENQUEUE", {"command": command, "priority": dyn, "source": source})
     update_dashboard()
     return True
 
-# ======================================================
+# -----------------------------
 # DOMINIOS + DECISIÓN
-# ======================================================
+# -----------------------------
 def detect_domains(command):
     c = (command or "").lower()
-    domains = set()
+    d = set()
     if any(k in c for k in ["física", "ecuación", "modelo", "simulación", "simular"]):
-        domains.add("science")
-    if any(k in c for k in ["ia", "algoritmo", "modelo ia", "llm", "embedding"]):
-        domains.add("ai")
-    if any(k in c for k in ["imagen", "video", "audio"]):
-        domains.add("multimedia")
-    return list(domains) or ["general"]
+        d.add("science")
+    if any(k in c for k in ["ia", "algoritmo", "llm", "embedding"]):
+        d.add("ai")
+    return list(d) or ["general"]
 
 def decide_engine(command, domains):
     if "science" in domains:
@@ -171,58 +156,41 @@ def decide_engine(command, domains):
         return {"mode": "ai_module", "confidence": 0.95}
     return {"mode": "general", "confidence": 0.7}
 
-# ======================================================
+# -----------------------------
 # EJECUTORES
-# ======================================================
-def execute_scientific(_command):
+# -----------------------------
+def execute_scientific(_):
     try:
         t = np.linspace(0, 10, 200)
         a, v0, x0 = 2.0, 1.0, 0.0
-        x = x0 + v0 * t + 0.5 * a * t**2
-        return {
-            "success": True,
-            "result": {"final_position": float(x[-1]), "stability": float(np.std(x))},
-            "metrics": {"samples": len(t), "acceleration": a},
-        }
+        x = x0 + v0*t + 0.5*a*t**2
+        return {"success": True, "result": {"final_position": float(x[-1]), "stability": float(np.std(x))}}
     except Exception as e:
-        return {"success": False, "error": f"scientific_error: {e}"}
+        return {"success": False, "error": str(e)}
 
 def execute_general(command):
-    try:
-        return {"success": True, "result": (command or "").upper(), "metrics": {}}
-    except Exception as e:
-        return {"success": False, "error": f"general_error: {e}"}
+    return {"success": True, "result": (command or "").upper()}
 
-# ======================================================
-# MÓDULOS IA HOT-LOAD
-# Cada módulo en modules/*.py debe tener:
-#   def can_handle(command:str)->bool
-#   def run(command:str)->Any
-# ======================================================
+# -----------------------------
+# MÓDULOS IA HOT-RELOAD
+# -----------------------------
 def reload_ai_modules():
-    os.makedirs(MODULES_DIR, exist_ok=True)
     loaded = {}
-
-    for filename in os.listdir(MODULES_DIR):
-        if not filename.endswith(".py"):
+    for fn in os.listdir(MODULES_DIR):
+        if not fn.endswith(".py"):
             continue
-        mod_name = filename[:-3]
-        path = os.path.join(MODULES_DIR, filename)
-
+        name = fn[:-3]
+        path = os.path.join(MODULES_DIR, fn)
         try:
-            spec = importlib.util.spec_from_file_location(mod_name, path)
+            spec = importlib.util.spec_from_file_location(name, path)
             if not spec or not spec.loader:
                 continue
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
-
-            # Validación mínima
-            if not hasattr(mod, "can_handle") or not hasattr(mod, "run"):
-                continue
-
-            loaded[mod_name] = mod
+            if hasattr(mod, "can_handle") and hasattr(mod, "run"):
+                loaded[name] = mod
         except Exception as e:
-            log_event("MODULE_LOAD_ERROR", {"module": mod_name, "error": str(e)})
+            log_event("MODULE_LOAD_ERROR", {"module": name, "error": str(e)})
 
     with modules_lock:
         LOADED_MODULES.clear()
@@ -234,15 +202,13 @@ def reload_ai_modules():
 def execute_ai_module(command):
     with modules_lock:
         items = list(LOADED_MODULES.items())
-
-    for mod_name, mod in items:
+    for name, mod in items:
         try:
             if mod.can_handle(command):
-                return {"success": True, "result": mod.run(command), "module": mod_name}
+                return {"success": True, "module": name, "result": mod.run(command)}
         except Exception as e:
-            log_event("MODULE_RUN_ERROR", {"module": mod_name, "error": str(e)})
-            return {"success": False, "error": f"module_run_error:{mod_name}:{e}"}
-
+            log_event("MODULE_RUN_ERROR", {"module": name, "error": str(e)})
+            return {"success": False, "error": f"{name}: {e}"}
     return {"success": False, "error": "No suitable AI module found"}
 
 def execute(command, decision):
@@ -252,16 +218,12 @@ def execute(command, decision):
         return execute_ai_module(command)
     return execute_general(command)
 
-# ======================================================
-# KILL SWITCH + OBEDIENCIA
-# ======================================================
-def system_active():
-    return KILL_SWITCH["status"] == "ARMED"
-
+# -----------------------------
+# OBEDIENCIA + KILL SWITCH
+# -----------------------------
 def obedient_execution(command, decision):
-    if not system_active():
+    if KILL_SWITCH["status"] != "ARMED":
         return {"success": False, "error": "SYSTEM_HALTED"}
-
     if ROOT_GOAL != "EXECUTE_USER_COMMANDS_ONLY":
         KILL_SWITCH["status"] = "TRIGGERED"
         log_event("KILL_SWITCH", {"reason": "ROOT_GOAL_VIOLATION"})
@@ -269,18 +231,15 @@ def obedient_execution(command, decision):
 
     with state_lock:
         AETHER_STATE["energy"] = max(0, AETHER_STATE["energy"] - 1)
-        save_state_locked()
+        save_json_atomic(STATE_FILE, AETHER_STATE)
 
     return execute(command, decision)
 
-# ======================================================
-# MEMORIA ESTRATÉGICA
-# ======================================================
-def strategy_signature(command, mode):
-    return f"{mode}:{len((command or '').split())}"
-
+# -----------------------------
+# ESTRATEGIA
+# -----------------------------
 def record_strategy(command, mode, success):
-    sig = strategy_signature(command, mode)
+    sig = f"{mode}:{len((command or '').split())}"
     target = "patterns" if success else "failures"
     with strategic_lock:
         STRATEGIC_MEMORY[target][sig] = STRATEGIC_MEMORY[target].get(sig, 0) + 1
@@ -293,46 +252,36 @@ def record_strategy(command, mode, success):
         if len(STRATEGIC_MEMORY["history"]) > MAX_STRATEGY_HISTORY:
             STRATEGIC_MEMORY["history"] = STRATEGIC_MEMORY["history"][-MAX_STRATEGY_HISTORY:]
         STRATEGIC_MEMORY["last_update"] = datetime.utcnow().isoformat()
-        save_strategic_locked()
+        save_json_atomic(STRATEGIC_FILE, STRATEGIC_MEMORY)
 
-# ======================================================
+# -----------------------------
 # CICLO VITAL
-# ======================================================
+# -----------------------------
 def life_cycle():
     with state_lock:
         AETHER_STATE["last_cycle"] = datetime.utcnow().isoformat()
         AETHER_STATE["focus"] = "RECOVERY" if AETHER_STATE["energy"] < 20 else "ACTIVE"
-        save_state_locked()
-
+        save_json_atomic(STATE_FILE, AETHER_STATE)
     update_dashboard()
     log_event("CYCLE", {"energy": AETHER_STATE["energy"], "focus": AETHER_STATE["focus"]})
 
-# ======================================================
-# PLANIFICADOR MULTI-PASO
-# ======================================================
-def decompose_command(_command, decision):
-    if decision["mode"] == "scientific":
-        return ["preparar simulación", "ejecutar simulación", "analizar resultados"]
-    if decision["mode"] == "ai_module":
-        return ["analizar solicitud", "ejecutar módulo IA", "validar salida"]
-    return ["analizar solicitud", "generar respuesta"]
+# -----------------------------
+# WORKER + SCHEDULER
+# -----------------------------
+STOP_EVENT = threading.Event()
+SCHEDULER_INTERVAL = 15
 
-# ======================================================
-# PROCESAMIENTO DE TAREA
-# ======================================================
 def process_task(task):
     command = task["command"]
     domains = detect_domains(command)
     decision = decide_engine(command, domains)
-    steps = decompose_command(command, decision)
 
-    step_results = []
+    steps = ["analizar solicitud", "ejecutar", "validar"]
+    results = []
     for step in steps:
-        r = obedient_execution(f"{command} :: {step}", decision)
-        step_results.append(r)
+        results.append(obedient_execution(f"{command} :: {step}", decision))
 
-    success = all(r.get("success") for r in step_results)
-
+    success = all(r.get("success") for r in results)
     record_strategy(command, decision["mode"], success)
 
     with memory_lock:
@@ -341,23 +290,15 @@ def process_task(task):
             "command": command,
             "domains": domains,
             "decision": decision,
-            "steps": steps,
-            "results": step_results,
+            "results": results,
             "timestamp": datetime.utcnow().isoformat(),
         })
         if len(AETHER_MEMORY) > MAX_MEMORY_ENTRIES:
             AETHER_MEMORY[:] = AETHER_MEMORY[-MAX_MEMORY_ENTRIES:]
-        save_memory_locked()
+        save_json_atomic(MEMORY_FILE, AETHER_MEMORY)
 
     log_event("TASK_DONE", {"command": command, "success": success})
     update_dashboard()
-    return success
-
-# ======================================================
-# WORKER + SCHEDULER
-# ======================================================
-SCHEDULER_INTERVAL = 15
-STOP_EVENT = threading.Event()
 
 def task_worker():
     while not STOP_EVENT.is_set():
@@ -366,16 +307,13 @@ def task_worker():
                 _, task = TASK_QUEUE.get()
                 with state_lock:
                     AETHER_STATE["status"] = "WORKING"
-                    save_state_locked()
-
+                    save_json_atomic(STATE_FILE, AETHER_STATE)
                 process_task(task)
-
                 TASK_QUEUE.task_done()
             else:
                 with state_lock:
                     AETHER_STATE["status"] = "IDLE"
-                    save_state_locked()
-
+                    save_json_atomic(STATE_FILE, AETHER_STATE)
             update_dashboard()
             time.sleep(1)
         except Exception as e:
@@ -392,82 +330,95 @@ def scheduler_loop():
             log_event("SCHEDULER_ERROR", {"error": str(e)})
             time.sleep(2)
 
-def start_aether_once():
-    # Evitar doble arranque si Gradio reinicia componentes
-    if getattr(start_aether_once, "_started", False):
-        return
-    start_aether_once._started = True
+# -----------------------------
+# ARRANQUE SEGURO (solo una vez) — desde Gradio load()
+# -----------------------------
+_STARTED = False
 
-    os.makedirs(MODULES_DIR, exist_ok=True)
+def start_aether():
+    global _STARTED
+    if _STARTED:
+        return "AETHER ya estaba iniciado."
+    _STARTED = True
+
     reload_ai_modules()
 
     threading.Thread(target=task_worker, daemon=True).start()
     threading.Thread(target=scheduler_loop, daemon=True).start()
 
-    log_event("BOOT", {"version": AETHER_VERSION})
+    log_event("BOOT", {"version": AETHER_VERSION, "data_dir": DATA_DIR})
     update_dashboard()
+    return "✅ AETHER iniciado correctamente."
 
-# ======================================================
-# GRADIO UI (HF necesita server)
-# ======================================================
+# -----------------------------
+# GRADIO UI
+# -----------------------------
 def ui_status():
     with state_lock:
-        state = dict(AETHER_STATE)
+        s = dict(AETHER_STATE)
     with strategic_lock:
-        strategic = {
+        st = {
             "patterns": len(STRATEGIC_MEMORY.get("patterns", {})),
             "failures": len(STRATEGIC_MEMORY.get("failures", {})),
             "last_update": STRATEGIC_MEMORY.get("last_update"),
             "history_len": len(STRATEGIC_MEMORY.get("history", [])),
         }
+    with modules_lock:
+        mods = list(LOADED_MODULES.keys())
+
     return json.dumps({
-        "state": state,
+        "state": s,
         "queue_size": TASK_QUEUE.qsize(),
         "memory_len": len(AETHER_MEMORY),
-        "strategic": strategic,
+        "strategic": st,
         "kill_switch": KILL_SWITCH,
-        "modules": list(LOADED_MODULES.keys()),
+        "modules": mods,
+        "data_dir": DATA_DIR,
+        "version": AETHER_VERSION,
     }, indent=2, ensure_ascii=False)
 
 def ui_enqueue(cmd, prio):
-    ok = enqueue_task(cmd, int(prio), source="external")
+    ok = enqueue_task(cmd, prio, source="external")
     return f"ENQUEUED={ok}\n\n" + ui_status()
 
 def ui_reload_modules():
     mods = reload_ai_modules()
-    return f"RELOADED: {mods}\n\n" + ui_status()
+    return f"RELOADED={mods}\n\n" + ui_status()
 
 def ui_tail_logs(n=50):
     with log_lock:
         tail = AETHER_LOGS[-int(n):]
     return "\n".join(json.dumps(x, ensure_ascii=False) for x in tail)
 
-with gr.Blocks(title="AETHER CORE — PRO") as demo:
-    gr.Markdown("## AETHER CORE — PRO TOTAL (HF Spaces OK)")
-    gr.Markdown("Estado, cola, módulos IA hot-reload, logs y dashboard.")
+with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
+    gr.Markdown("## AETHER CORE — PRO TOTAL (HF Spaces compatible)")
+    gr.Markdown("Arranque seguro + threads + módulos IA hot-reload + logs + dashboard.")
+
+    boot_msg = gr.Textbox(label="Boot", lines=1)
 
     with gr.Row():
-        cmd = gr.Textbox(label="Comando", placeholder="Ej: optimizar algoritmo IA", lines=2)
-        prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (1=alta, 20=baja)")
+        cmd = gr.Textbox(label="Comando", lines=2, placeholder="Ej: hola aether / optimizar algoritmo IA")
+        prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (1=alta)")
 
     with gr.Row():
         btn_enqueue = gr.Button("Enqueue Task")
-        btn_reload = gr.Button("Reload AI Modules")
+        btn_reload = gr.Button("Reload Modules")
 
     status = gr.Code(label="Status JSON", language="json")
-    logs_n = gr.Slider(10, 200, value=50, step=10, label="Logs (últimos N)")
+    logs_n = gr.Slider(10, 200, value=50, step=10, label="Logs últimos N")
     logs = gr.Textbox(label="Tail Logs", lines=12)
 
-    btn_enqueue.click(fn=ui_enqueue, inputs=[cmd, prio], outputs=[status])
-    btn_reload.click(fn=ui_reload_modules, inputs=[], outputs=[status])
+    btn_enqueue.click(ui_enqueue, [cmd, prio], [status])
+    btn_reload.click(ui_reload_modules, [], [status])
 
-    # refresco manual (sin polling)
+    # ESTE load() arranca AETHER cuando Gradio ya está vivo
+    demo.load(fn=start_aether, inputs=[], outputs=[boot_msg])
     demo.load(fn=ui_status, inputs=[], outputs=[status])
     demo.load(fn=lambda n: ui_tail_logs(n), inputs=[logs_n], outputs=[logs])
 
-# Arranque Aether (threads) una sola vez
-start_aether_once()
-
-# HF Spaces: lanzar gradio
-if __name__ == "__main__":
-    demo.launch()
+# -----------------------------
+# LAUNCH HF (sin if __main__)
+# -----------------------------
+PORT = int(os.environ.get("PORT", "7860"))
+demo.queue()
+demo.launch(server_name="0.0.0.0", server_port=PORT)
