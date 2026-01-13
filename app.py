@@ -1,5 +1,5 @@
 # ======================================================
-# AETHER CORE — HF SPACES FIXED (PRO TOTAL) + CHAT OK
+# AETHER CORE — HF SPACES FIXED (PRO TOTAL) + CHAT (OLD GRADIO)
 # ======================================================
 
 import os
@@ -9,10 +9,16 @@ import uuid
 import threading
 import importlib.util
 from queue import PriorityQueue
-from datetime import datetime
+from datetime import datetime, timezone
 
 import numpy as np
 import gradio as gr
+
+# -----------------------------
+# TIME (timezone-aware, no warning)
+# -----------------------------
+def safe_now():
+    return datetime.now(timezone.utc).isoformat()
 
 # -----------------------------
 # DIRECTORIO DE DATOS (HF-safe)
@@ -23,7 +29,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # -----------------------------
 # VERSIONADO Y ARCHIVOS
 # -----------------------------
-AETHER_VERSION = "3.4.3-pro-total-hf-chat-fixed"
+AETHER_VERSION = "3.4.4-pro-total-hf-chat-oldgradio"
 
 STATE_FILE = os.path.join(DATA_DIR, "aether_state.json")
 MEMORY_FILE = os.path.join(DATA_DIR, "aether_memory.json")
@@ -47,7 +53,7 @@ DEFAULT_STATE = {
     "status": "IDLE",
     "energy": 100,
     "focus": "STANDBY",
-    "created_at": datetime.utcnow().isoformat(),
+    "created_at": safe_now(),
     "last_cycle": None,
 }
 
@@ -95,7 +101,7 @@ LOADED_MODULES = {}
 # LOGS + DASHBOARD
 # -----------------------------
 def log_event(t, info):
-    entry = {"timestamp": datetime.utcnow().isoformat(), "type": t, "info": info}
+    entry = {"timestamp": safe_now(), "type": t, "info": info}
     with log_lock:
         AETHER_LOGS.append(entry)
         if len(AETHER_LOGS) > MAX_LOG_ENTRIES:
@@ -124,7 +130,7 @@ TASK_DEDUP = set()
 
 def compute_priority(base):
     with state_lock:
-        e = AETHER_STATE["energy"]
+        e = AETHER_STATE.get("energy", 0)
     return base + 5 if e < 20 else base
 
 def enqueue_task(command, priority=5, source="external"):
@@ -145,7 +151,7 @@ def enqueue_task(command, priority=5, source="external"):
                 "id": str(uuid.uuid4()),
                 "command": command,
                 "source": source,
-                "created_at": datetime.utcnow().isoformat(),
+                "created_at": safe_now(),
             },
         )
     )
@@ -268,18 +274,11 @@ def record_strategy(command, mode, success):
     with strategic_lock:
         STRATEGIC_MEMORY[target][sig] = STRATEGIC_MEMORY[target].get(sig, 0) + 1
         STRATEGIC_MEMORY["history"].append(
-            {
-                "timestamp": datetime.utcnow().isoformat(),
-                "command": command,
-                "mode": mode,
-                "success": bool(success),
-            }
+            {"timestamp": safe_now(), "command": command, "mode": mode, "success": bool(success)}
         )
         if len(STRATEGIC_MEMORY["history"]) > MAX_STRATEGY_HISTORY:
-            STRATEGIC_MEMORY["history"] = STRATEGIC_MEMORY["history"][
-                -MAX_STRATEGY_HISTORY:
-            ]
-        STRATEGIC_MEMORY["last_update"] = datetime.utcnow().isoformat()
+            STRATEGIC_MEMORY["history"] = STRATEGIC_MEMORY["history"][-MAX_STRATEGY_HISTORY:]
+        STRATEGIC_MEMORY["last_update"] = safe_now()
         save_json_atomic(STRATEGIC_FILE, STRATEGIC_MEMORY)
 
 # -----------------------------
@@ -287,7 +286,7 @@ def record_strategy(command, mode, success):
 # -----------------------------
 def life_cycle():
     with state_lock:
-        AETHER_STATE["last_cycle"] = datetime.utcnow().isoformat()
+        AETHER_STATE["last_cycle"] = safe_now()
         AETHER_STATE["focus"] = "RECOVERY" if AETHER_STATE["energy"] < 20 else "ACTIVE"
         save_json_atomic(STATE_FILE, AETHER_STATE)
     update_dashboard()
@@ -318,7 +317,7 @@ def process_task(task):
                 "domains": domains,
                 "decision": decision,
                 "results": results,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": safe_now(),
             }
         )
         if len(AETHER_MEMORY) > MAX_MEMORY_ENTRIES:
@@ -359,7 +358,7 @@ def scheduler_loop():
             time.sleep(2)
 
 # -----------------------------
-# ARRANQUE SEGURO (solo una vez) — desde Gradio load()
+# ARRANQUE SEGURO (solo una vez)
 # -----------------------------
 _STARTED = False
 
@@ -397,7 +396,7 @@ def run_now(command: str):
                 "domains": domains,
                 "decision": decision,
                 "results": [result],
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": safe_now(),
                 "source": "chat",
             }
         )
@@ -427,7 +426,7 @@ def format_reply(decision, result):
     return str(result.get("result"))
 
 # -----------------------------
-# GRADIO UI HELPERS
+# UI HELPERS
 # -----------------------------
 def ui_status():
     with state_lock:
@@ -470,6 +469,7 @@ def ui_tail_logs(n=50):
         tail = AETHER_LOGS[-int(n):]
     return "\n".join(json.dumps(x, ensure_ascii=False) for x in tail)
 
+# Chatbot viejo: history = list of tuples (user, assistant)
 def chat_send(message, history):
     message = (message or "").strip()
     if not message:
@@ -479,8 +479,7 @@ def chat_send(message, history):
     reply = format_reply(decision, result)
 
     history = history or []
-    history.append({"role": "user", "content": message})
-    history.append({"role": "assistant", "content": reply})
+    history.append((message, reply))
     return history, ""
 
 # -----------------------------
@@ -488,11 +487,11 @@ def chat_send(message, history):
 # -----------------------------
 with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     gr.Markdown("## AETHER CORE — PRO TOTAL")
-    gr.Markdown("Chat + cola + módulos IA hot-reload + logs + dashboard.")
+    gr.Markdown("Chat + cola + plugins hot-reload + logs + dashboard.")
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420, type="messages")
+    chat = gr.Chatbot(label="AETHER Chat", height=420)  # SIN type=
     user_msg = gr.Textbox(label="Escribe aquí", placeholder="Ej: hola aether / optimizar algoritmo IA", lines=2)
 
     with gr.Row():
