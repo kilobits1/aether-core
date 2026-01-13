@@ -1,5 +1,5 @@
 # ======================================================
-# AETHER CORE — HF SPACES FIXED (PRO TOTAL) + CHAT (OLD GRADIO)
+# AETHER CORE — HF SPACES FIXED (PRO TOTAL) + CHAT (GRADIO "messages" DEFAULT)
 # ======================================================
 
 import os
@@ -15,7 +15,7 @@ import numpy as np
 import gradio as gr
 
 # -----------------------------
-# TIME (timezone-aware, no warning)
+# TIME (timezone-aware)
 # -----------------------------
 def safe_now():
     return datetime.now(timezone.utc).isoformat()
@@ -29,7 +29,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # -----------------------------
 # VERSIONADO Y ARCHIVOS
 # -----------------------------
-AETHER_VERSION = "3.4.4-pro-total-hf-chat-oldgradio"
+AETHER_VERSION = "3.4.5-pro-total-hf-chat-messages"
 
 STATE_FILE = os.path.join(DATA_DIR, "aether_state.json")
 MEMORY_FILE = os.path.join(DATA_DIR, "aether_memory.json")
@@ -112,11 +112,11 @@ def update_dashboard():
     with state_lock:
         snap = dict(AETHER_STATE)
     dash = {
-        "energy": snap["energy"],
-        "focus": snap["focus"],
-        "status": snap["status"],
+        "energy": snap.get("energy", 0),
+        "focus": snap.get("focus", "STANDBY"),
+        "status": snap.get("status", "IDLE"),
         "queue_size": TASK_QUEUE.qsize(),
-        "last_cycle": snap["last_cycle"],
+        "last_cycle": snap.get("last_cycle"),
         "version": AETHER_VERSION,
         "data_dir": DATA_DIR,
     }
@@ -130,7 +130,7 @@ TASK_DEDUP = set()
 
 def compute_priority(base):
     with state_lock:
-        e = AETHER_STATE.get("energy", 0)
+        e = int(AETHER_STATE.get("energy", 0))
     return base + 5 if e < 20 else base
 
 def enqueue_task(command, priority=5, source="external"):
@@ -167,8 +167,8 @@ def detect_domains(command):
     d = set()
     if any(k in c for k in ["física", "ecuación", "modelo", "simulación", "simular"]):
         d.add("science")
-    if any(k in c for k in ["ia", "algoritmo", "llm", "embedding"]):
-        d.add("ai")
+    if any(k in c for k in ["ia", "algoritmo", "llm", "embedding", "hola", "hello"]):
+        d.add("ai")  # permite que hello_ai se active por texto común
     return list(d) or ["general"]
 
 def decide_engine(command, domains):
@@ -469,17 +469,38 @@ def ui_tail_logs(n=50):
         tail = AETHER_LOGS[-int(n):]
     return "\n".join(json.dumps(x, ensure_ascii=False) for x in tail)
 
-# Chatbot viejo: history = list of tuples (user, assistant)
+# ======================================================
+# CHATBOT: FORMATO "messages"
+#   history = [{"role":"user","content":"..."}, {"role":"assistant","content":"..."}]
+# ======================================================
+def _normalize_history_to_messages(history):
+    if not history:
+        return []
+    out = []
+    for item in history:
+        if isinstance(item, dict) and "role" in item and "content" in item:
+            out.append({"role": str(item["role"]), "content": str(item["content"])})
+            continue
+        if isinstance(item, (tuple, list)) and len(item) == 2:
+            u, a = item
+            out.append({"role": "user", "content": "" if u is None else str(u)})
+            out.append({"role": "assistant", "content": "" if a is None else str(a)})
+            continue
+        out.append({"role": "system", "content": str(item)})
+    return out
+
 def chat_send(message, history):
     message = (message or "").strip()
     if not message:
         return history, ""
 
+    history = _normalize_history_to_messages(history)
+
     decision, result = run_now(message)
     reply = format_reply(decision, result)
 
-    history = history or []
-    history.append((message, reply))  # 👈 TUPLA, NO dict
+    history.append({"role": "user", "content": message})
+    history.append({"role": "assistant", "content": reply})
 
     return history, ""
 
@@ -492,8 +513,12 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420)
-    user_msg = gr.Textbox(label="Escribe aquí", placeholder="Ej: hola aether / optimizar algoritmo IA", lines=2)
+    chat = gr.Chatbot(label="AETHER Chat", height=420)  # NO type=
+    user_msg = gr.Textbox(
+        label="Escribe aquí",
+        placeholder="Ej: hola aether / optimizar algoritmo IA",
+        lines=2,
+    )
 
     with gr.Row():
         btn_send = gr.Button("Enviar (Chat)")
@@ -502,16 +527,22 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
         btn_reload = gr.Button("Reload Modules")
 
     status = gr.Code(label="Status JSON", language="json")
+
     logs_n = gr.Slider(10, 200, value=50, step=10, label="Logs últimos N")
     logs = gr.Textbox(label="Tail Logs", lines=12)
+    btn_refresh_logs = gr.Button("Refresh Logs")
 
     btn_send.click(fn=chat_send, inputs=[user_msg, chat], outputs=[chat, user_msg])
     btn_enqueue.click(fn=ui_enqueue, inputs=[user_msg, prio], outputs=[status])
     btn_reload.click(fn=ui_reload_modules, inputs=[], outputs=[status])
 
+    # logs manual (evita rarezas de .load con inputs)
+    btn_refresh_logs.click(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
+    logs_n.change(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
+
     demo.load(fn=start_aether, inputs=[], outputs=[boot_msg])
     demo.load(fn=ui_status, inputs=[], outputs=[status])
-    demo.load(fn=lambda n: ui_tail_logs(n), inputs=[logs_n], outputs=[logs])
+    demo.load(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
 
 PORT = int(os.environ.get("PORT", "7860"))
 demo.queue()
