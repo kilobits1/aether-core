@@ -6,32 +6,23 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from fpdf import FPDF
 import numpy as np
-import ezdxf  # Librería para generar planos DXF (AutoCAD)
+import ezdxf
 
 # ======================================================
-# 1. FIREBASE INIT
+# 1. INIT FIREBASE
 # ======================================================
 if "FIREBASE_KEY" in os.environ:
     firebase_key = json.loads(os.environ["FIREBASE_KEY"])
+    if not firebase_admin._apps:
+        cred = credentials.Certificate(firebase_key)
+        firebase_admin.initialize_app(cred)
+    db = firestore.client()
 else:
-    try:
-        firebase_key = json.load(open("llave.json"))
-    except:
-        firebase_key = None
-
-if firebase_key and not firebase_admin._apps:
-    cred = credentials.Certificate(firebase_key)
-    firebase_admin.initialize_app(cred)
-
-db = firestore.client()
+    db = None
 
 # ======================================================
-# 2. CONFIG & ONTOLOGÍA (Sin tocar nada)
+# 2. ONTOLOGÍA Y HARDWARE (Sin tocar nada)
 # ======================================================
-AGENT_NAME = "aether-core"
-EXECUTION_MODE = "SIMULATION"
-DEFAULT_SESSION = "default"
-
 DOMAIN_MAP = {
     "matematicas": ["ecuacion", "calculo", "modelo", "optimizacion", "simular"],
     "fisica": ["fuerza", "energia", "movimiento", "termodinamica"],
@@ -49,51 +40,21 @@ DOMAIN_MAP = {
 HARDWARE_LIBRARY = {
     "temperatura": "// Firmware Arduino\n#include \"DHT.h\"\nvoid setup() { dht.begin(); }",
     "distancia": "// Firmware Arduino\nconst int trig = 5; void setup() { pinMode(trig, OUTPUT); }",
-    "movimiento": "// Firmware Arduino\nconst int pir = 13; void setup() { pinMode(pir, INPUT); }"
+    "movimiento": "// Firmware PIR\nconst int pir = 13; void setup() { pinMode(pir, INPUT); }",
+    "rele": "// Código Relé\nvoid setup() { pinMode(5, OUTPUT); }\nvoid loop() { digitalWrite(5, HIGH); delay(1000); }"
 }
 
 # ======================================================
-# 3. LÓGICA DE DETECCIÓN (Tus originales)
+# 3. GENERADORES DE ARTEFACTOS
 # ======================================================
-def select_mode(command):
-    t = command.lower()
-    if any(k in t for k in ["analizar", "calcular", "demostrar", "simular"]): return "scientific"
-    if any(k in t for k in ["diseñar", "crear", "construir"]): return "engineering"
-    return "general"
-
-def detect_domains(command):
-    t = command.lower()
-    domains = [d for d, keywords in DOMAIN_MAP.items() if any(k in t for k in keywords)]
-    return domains if domains else ["general"]
-
-def classify_command(text):
-    t = text.lower()
-    if "estado" in t: return "system"
-    if any(k in t for k in ["hardware", "codigo", "plano", "cad"]): return "engineering"
-    return "order"
-
-def decide_output_artifact(mode, domains):
-    if "nanotecnologia" in domains or "medicina" in domains: return "scientific_design"
-    if "electronica" in domains or "mecatronica" in domains or "mecanica" in domains: return "engineering_design"
-    if mode == "scientific": return "mathematical_model"
-    return "technical_plan"
-
-# ======================================================
-# 4. GENERADORES DE ARTEFACTOS (CAD e Ingeniería)
-# ======================================================
-def create_dxf_blueprint(title):
-    doc = ezdxf.new()
-    msp = doc.modelspace()
-    # Dibujar un contorno base de 100x100mm para el plano
-    msp.add_lwline([(0, 0), (100, 0), (100, 100), (0, 100), (0, 0)])
-    path = f"{title}.dxf"
-    doc.saveas(path)
-    return path
-
 def generate_engineering_design(command, domains):
-    h_code = next((code for hw, code in HARDWARE_LIBRARY.items() if hw in command.lower()), "")
-    
-    # Lógica de Planos CAD descriptivos (Tu nueva solicitud)
+    # Buscamos si hay código de hardware específico
+    h_code = ""
+    for hw, code in HARDWARE_LIBRARY.items():
+        if hw in command.lower():
+            h_code = code
+            break
+            
     cad_specs = f"""
 --- ESPECIFICACIONES CAD / PLANOS ---
 Entidad: Pieza Mecánica / Gabinete
@@ -105,8 +66,7 @@ Capas (Layers):
 Coordenadas Base: (0,0,0) a (100,100,50) mm
 """
     
-    # Módulo Multi-Lenguaje
-    python_java = f"""
+    soft_specs = f"""
 --- SOFTWARE ADICIONAL ---
 [Python]: import serial; ser = serial.Serial('/dev/ttyUSB0', 115200)
 [Java]: public class AetherControl {{ public static void main(String[] args) {{}} }}
@@ -114,72 +74,76 @@ Coordenadas Base: (0,0,0) a (100,100,50) mm
     
     base = f"⚙️ DISEÑO DE INGENIERÍA COMPLETO\nObjetivo: {command}\nDominios: {', '.join(domains)}\n"
     base += cad_specs
-    
-    if h_code: 
-        base += f"\n--- FIRMWARE ESP32 (Arduino) ---\n{h_code}"
-    
-    base += python_java
+    if h_code: base += f"\n--- FIRMWARE GENERADO ---\n{h_code}"
+    base += soft_specs
     return base
 
-# (Mantenemos tus otros generadores intactos)
-def generate_scientific_design(command, domains):
-    return f"📄 DISEÑO CIENTÍFICO\nObjetivo: {command}\nDominios: {', '.join(domains)}\n\n1. Fundamentación\n2. Principios\n3. Aplicación"
-
-def generate_mathematical_model(command):
-    t_vals = np.linspace(0, 10, 5)
-    return f"📐 MODELO MATEMÁTICO\nProblema: {command}\n\nSimulación: {t_vals.tolist()}\nEstado: Calculado."
-
-def generate_technical_plan(command):
-    return f"🧠 PLAN TÉCNICO\nObjetivo: {command}\n\n1. Definición\n2. Pasos técnicos."
-
 # ======================================================
-# 5. CORE BRAIN & PDF
+# 4. EXPORTACIÓN DE ARCHIVOS (PDF y DXF)
 # ======================================================
 def create_pdf(content, title):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", size=12)
-    pdf.multi_cell(0, 10, txt=content)
-    path = f"{title}.pdf"
+    pdf.multi_cell(0, 10, txt=content.encode('latin-1', 'replace').decode('latin-1'))
+    path = f"Reporte_{title}.pdf"
     pdf.output(path)
     return path
 
-def aether(command, session=DEFAULT_SESSION):
-    cmd_type = classify_command(command)
-    mode = select_mode(command)
-    domains = detect_domains(command)
-    artifact = decide_output_artifact(mode, domains)
-
-    if artifact == "engineering_design":
-        output = generate_engineering_design(command, domains)
-    elif artifact == "scientific_design":
-        output = generate_scientific_design(command, domains)
-    elif artifact == "mathematical_model":
-        output = generate_mathematical_model(command)
-    else:
-        output = generate_technical_plan(command)
-
-    # Generar archivos de salida
-    pdf_path = create_pdf(output, f"Reporte_{session}")
-    dxf_path = create_dxf_blueprint(f"Plano_{session}") # Genera el archivo .dxf real
-
-    return output, pdf_path, dxf_path
+def create_dxf(title):
+    doc = ezdxf.new()
+    msp = doc.modelspace()
+    # Dibujamos un plano técnico base
+    msp.add_lwline([(0, 0), (100, 0), (100, 100), (0, 100), (0, 0)], close=True)
+    msp.add_circle((50, 50), 10) # Un círculo representando una perforación
+    path = f"Plano_{title}.dxf"
+    doc.saveas(path)
+    return path
 
 # ======================================================
-# 6. UI (Gradio con 3 Salidas)
+# 5. CORE BRAIN
 # ======================================================
-with gr.Blocks(title="AETHER CORE CAD") as demo:
-    gr.Markdown("## 🧠 Aether Core — Ingeniería, CAD y Software")
+def aether_pro(command, session="default"):
+    t = command.lower()
+    domains = [d for d, keywords in DOMAIN_MAP.items() if any(k in t for k in keywords)]
+    if not domains: domains = ["general"]
+    
+    # Generar contenido
+    output_text = generate_engineering_design(command, domains)
+    
+    # Guardar en Firebase
+    if db:
+        db.collection("aether_memory").add({
+            "time": datetime.datetime.utcnow().isoformat(),
+            "command": command,
+            "session": session,
+            "domains": domains
+        })
+        
+    # Crear archivos físicos
+    try:
+        pdf_file = create_pdf(output_text, session)
+        dxf_file = create_dxf(session)
+    except Exception as e:
+        return f"Error generando archivos: {str(e)}", None, None
+        
+    return output_text, pdf_file, dxf_file
+
+# ======================================================
+# 6. INTERFAZ
+# ======================================================
+with gr.Blocks(title="AETHER CORE") as demo:
+    gr.Markdown("# 🧠 Aether Core — Ingeniería, CAD y Software")
     with gr.Row():
         with gr.Column():
-            inp = gr.Textbox(label="Orden", lines=3)
-            sess = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
+            inp = gr.Textbox(label="Orden", placeholder="Ej: Diseñar gabinete para sensor de temperatura", lines=3)
+            sess = gr.Textbox(label="Sesión", value="default")
             btn = gr.Button("GENERAR TODO", variant="primary")
         with gr.Column():
             out_txt = gr.Textbox(label="Vista Previa", lines=10)
-            out_pdf = gr.File(label="Descargar Reporte PDF")
-            out_dxf = gr.File(label="Descargar Plano CAD (.DXF)")
+            out_pdf = gr.File(label="Reporte PDF")
+            out_dxf = gr.File(label="Plano CAD (.DXF)")
 
-    btn.click(aether, inputs=[inp, sess], outputs=[out_txt, out_pdf, out_dxf])
+    btn.click(aether_pro, inputs=[inp, sess], outputs=[out_txt, out_pdf, out_dxf])
 
 demo.launch()
