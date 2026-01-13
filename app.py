@@ -33,15 +33,15 @@ def is_real_mode():
     return EXECUTION_MODE == "REAL"
 
 # ======================================================
-# 3. OBJETIVOS / MISIONES (VOLUNTAD ARTIFICIAL)
+# 3. MISIONES (VOLUNTAD ARTIFICIAL)
 # ======================================================
 MISSIONS = {
     "principal": "Diseñar y optimizar sistemas inteligentes reales",
     "secundarias": [
         "Aprender de interacciones",
-        "Mejorar precisión",
         "Recordar contexto",
-        "Optimizar decisiones"
+        "Optimizar decisiones",
+        "Orquestar herramientas externas"
     ]
 }
 
@@ -50,29 +50,26 @@ MISSIONS = {
 # ======================================================
 DOMAIN_MAP = {
     "matematicas": ["ecuacion", "calculo", "modelo", "optimizacion"],
-    "fisica": ["fuerza", "energia", "movimiento", "termodinamica"],
-    "quimica": ["reaccion", "molecula", "compuesto"],
-    "electronica": ["voltaje", "corriente", "sensor", "esp32", "pcb", "relay", "rele"],
-    "mecanica": ["estructura", "engranaje", "dinamica"],
-    "mecatronica": ["robot", "control", "actuador"],
-    "medicina": ["tratamiento", "diagnostico", "farmaco"],
-    "biologia": ["celula", "genetica", "organismo"],
-    "nanotecnologia": ["nanobot", "nano", "molecular"],
-    "ambiental": ["contaminacion", "agua", "energia limpia"],
-    "aeroespacial": ["orbita", "satelite", "cohete", "nasa"]
+    "fisica": ["fuerza", "energia", "movimiento"],
+    "electronica": ["sensor", "esp32", "pcb", "rele", "relay"],
+    "mecatronica": ["robot", "actuador", "control"],
+    "medicina": ["diagnostico", "tratamiento"],
+    "ia": ["modelo", "red", "inteligencia"],
+    "multimedia": ["video", "musica", "audio", "imagen", "animacion"],
+    "software": ["app", "aplicacion", "backend", "frontend"]
 }
 
 # ======================================================
 # 5. HARDWARE KNOWLEDGE BASE
 # ======================================================
 HARDWARE_LIBRARY = {
-    "sensor temperatura": "// Arduino DHT\n#include <DHT.h>\nDHT dht(2, DHT11);\nvoid setup(){ dht.begin(); }",
-    "rele": "// Relé básico\nvoid setup(){ pinMode(5, OUTPUT); }\nvoid loop(){ digitalWrite(5, HIGH); }",
-    "ultrasonico": "// HC-SR04\nconst int trig=9, echo=10;\nvoid setup(){ pinMode(trig,OUTPUT); pinMode(echo,INPUT); }"
+    "sensor temperatura": "// Arduino DHT\n#include <DHT.h>\nDHT dht(2, DHT11);",
+    "rele": "// Relé\nvoid setup(){ pinMode(5, OUTPUT); }",
+    "ultrasonico": "// HC-SR04\nconst int trig=9, echo=10;"
 }
 
 # ======================================================
-# 6. PLUGIN SYSTEM (IA MODULAR)
+# 6. PLUGIN SYSTEM (MODULAR)
 # ======================================================
 PLUGINS = {}
 
@@ -88,24 +85,34 @@ def load_plugins():
 
 load_plugins()
 
+def select_plugin(command):
+    c = command.lower()
+    if "video" in c:
+        return "video"
+    if "musica" in c or "música" in c:
+        return "music"
+    if "app" in c:
+        return "app"
+    return None
+
 # ======================================================
 # 7. FUNCIONES COGNITIVAS
 # ======================================================
 def think(command):
     return [
-        "comprender_problema",
-        "detectar_dominio",
-        "recuperar_memoria",
-        "seleccionar_estrategia",
-        "generar_solucion",
-        "auto_evaluar"
+        "comprender",
+        "analizar",
+        "recordar",
+        "planificar",
+        "ejecutar",
+        "evaluar"
     ]
 
 def select_mode(command):
     t = command.lower()
-    if any(k in t for k in ["analizar", "calcular", "demostrar", "simular"]):
+    if any(k in t for k in ["calcular", "analizar", "simular"]):
         return "scientific"
-    if any(k in t for k in ["diseñar", "crear", "construir"]):
+    if any(k in t for k in ["crear", "diseñar", "construir"]):
         return "engineering"
     return "general"
 
@@ -118,20 +125,7 @@ def classify_command(command):
     t = command.lower()
     if "estado" in t:
         return "system"
-    if any(k in t for k in ["hardware", "sensor", "rele", "pcb"]):
-        return "engineering"
-    if t.startswith(("crear", "diseñar")):
-        return "task"
-    return "order"
-
-def decide_artifact(mode, domains):
-    if any(d in domains for d in ["medicina", "nanotecnologia"]):
-        return "scientific_design"
-    if any(d in domains for d in ["electronica", "mecatronica", "mecanica"]):
-        return "engineering_design"
-    if mode == "scientific":
-        return "mathematical_model"
-    return "technical_plan"
+    return "task"
 
 # ======================================================
 # 8. MEMORIA SEMÁNTICA
@@ -147,7 +141,7 @@ def cosine_similarity(v1, v2):
 def store_memory(command, response, domains, session, quality):
     if not db:
         return
-    db.collection("aether_semantic_memory").add({
+    db.collection("aether_memory").add({
         "command": command,
         "response": response,
         "domains": domains,
@@ -162,7 +156,7 @@ def retrieve_similar_memories(command, top_k=3):
         return []
     qv = text_to_vector(command)
     memories = []
-    for doc in db.collection("aether_semantic_memory").stream():
+    for doc in db.collection("aether_memory").stream():
         data = doc.to_dict()
         sim = cosine_similarity(qv, data["vector"])
         memories.append((sim, data))
@@ -170,18 +164,54 @@ def retrieve_similar_memories(command, top_k=3):
     return [m for _, m in memories[:top_k]]
 
 # ======================================================
-# 9. AUTOEVALUACIÓN (META-COGNICIÓN)
+# 9. PLANIFICADOR AUTÓNOMO
+# ======================================================
+def task_planner(goal):
+    g = goal.lower()
+    if "video" in g or "musica" in g:
+        return [
+            "Definir concepto",
+            "Crear guion",
+            "Diseñar estilo",
+            "Generar contenido",
+            "Renderizar",
+            "Exportar"
+        ]
+    if "app" in g:
+        return [
+            "Definir funciones",
+            "Diseñar interfaz",
+            "Programar backend",
+            "Integrar IA",
+            "Probar",
+            "Desplegar"
+        ]
+    return [
+        "Analizar objetivo",
+        "Diseñar solución",
+        "Ejecutar",
+        "Evaluar"
+    ]
+
+def execute_plan(steps):
+    log = "🛠️ PLAN DE EJECUCIÓN:\n"
+    for i, step in enumerate(steps, 1):
+        log += f"{i}. {step}\n"
+    return log
+
+# ======================================================
+# 10. AUTOEVALUACIÓN
 # ======================================================
 def self_evaluate(output):
     score = 0
     if len(output) > 200: score += 1
-    if "1." in output: score += 1
+    if "PLAN" in output: score += 1
     if "Objetivo" in output: score += 1
     if "Diseño" in output or "Modelo" in output: score += 1
     return score
 
 # ======================================================
-# 10. EXPORTACIÓN REAL (PDF)
+# 11. EXPORTACIÓN
 # ======================================================
 def export_pdf(content, filename="aether_output.pdf"):
     pdf = FPDF()
@@ -191,91 +221,42 @@ def export_pdf(content, filename="aether_output.pdf"):
     pdf.output(filename)
 
 # ======================================================
-# 11. GENERADORES DE ARTEFACTOS
+# 12. GENERADORES
 # ======================================================
-def generate_scientific_design(cmd, domains):
-    return f"""📄 DISEÑO CIENTÍFICO
+def generate_output(cmd, domains):
+    return f"""🧠 RESULTADO DE AETHER
 Objetivo: {cmd}
 Dominios: {", ".join(domains)}
-1. Fundamentación
-2. Principios
-3. Modelo
-4. Supuestos
-5. Aplicaciones
-"""
 
-def generate_engineering_design(cmd, domains):
-    firmware = next((v for k, v in HARDWARE_LIBRARY.items() if k in cmd.lower()), "")
-    return f"""⚙️ DISEÑO DE INGENIERÍA
-Objetivo: {cmd}
-Dominios: {", ".join(domains)}
-1. Arquitectura
-2. Componentes
-3. Control
-4. Seguridad
-5. Prototipo
---- FIRMWARE ---
-{firmware if firmware else "No requerido"}
-"""
-
-def generate_mathematical_model(cmd):
-    return f"""📐 MODELO MATEMÁTICO
-Problema: {cmd}
-1. Variables
-2. Ecuaciones
-3. Método
-4. Resultados
-"""
-
-def generate_technical_plan(cmd):
-    return f"""🧠 PLAN TÉCNICO
-Objetivo: {cmd}
-1. Definición
-2. Estrategia
-3. Recursos
-4. Riesgos
-5. Próximos pasos
+1. Análisis
+2. Diseño
+3. Ejecución
+4. Evaluación
 """
 
 # ======================================================
-# 12. CORE BRAIN (AETHER)
+# 13. CORE BRAIN
 # ======================================================
 def aether(command, session=DEFAULT_SESSION):
-    for name, plugin in PLUGINS.items():
-        if name in command.lower():
-            return plugin(command)
 
-    steps = think(command)
+    plugin = select_plugin(command)
+    if plugin and plugin in PLUGINS:
+        return PLUGINS[plugin](command)
+
     memories = retrieve_similar_memories(command)
-
     memory_context = ""
     if memories:
         memory_context = "🧠 CONTEXTO RECORDADO:\n"
         for m in memories:
             memory_context += f"- {m['command']} ({m['domains']})\n"
 
-    cmd_type = classify_command(command)
-    mode = select_mode(command)
     domains = detect_domains(command)
-    artifact = decide_artifact(mode, domains)
+    output = generate_output(command, domains)
 
-    if cmd_type == "system":
-        output = f"""🧠 ESTADO DE AETHER
-Agente: {AGENT_NAME}
-Modo: {EXECUTION_MODE}
-Misión: {MISSIONS['principal']}
-Estado: OPERATIVO
-"""
-    elif artifact == "scientific_design":
-        output = generate_scientific_design(command, domains)
-    elif artifact == "engineering_design":
-        output = generate_engineering_design(command, domains)
-    elif artifact == "mathematical_model":
-        output = generate_mathematical_model(command)
-    else:
-        output = generate_technical_plan(command)
+    plan_steps = task_planner(command)
+    plan_log = execute_plan(plan_steps)
 
-    final_output = memory_context + "\n" + output
+    final_output = memory_context + "\n" + output + "\n" + plan_log
     quality = self_evaluate(final_output)
 
     store_memory(command, final_output, domains, session, quality)
@@ -283,13 +264,13 @@ Estado: OPERATIVO
     if is_real_mode():
         export_pdf(final_output)
 
-    return final_output + f"\n\n🔍 Autoevaluación: {quality}/4"
+    return final_output + f"\n🔍 Autoevaluación: {quality}/4"
 
 # ======================================================
-# 13. UI
+# 14. UI
 # ======================================================
 with gr.Blocks(title="AETHER CORE") as demo:
-    gr.Markdown("## 🧠 AETHER CORE — Sistema Cognitivo Autónomo v1.0")
+    gr.Markdown("## 🧠 AETHER CORE — Sistema Cognitivo Autónomo")
     session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
     inp = gr.Textbox(label="Orden", lines=4)
     out = gr.Textbox(label="Resultado", lines=30)
@@ -297,4 +278,5 @@ with gr.Blocks(title="AETHER CORE") as demo:
     btn.click(aether, inputs=[inp, session], outputs=out)
 
 demo.launch()
+
 
