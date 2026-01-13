@@ -276,7 +276,5 @@ btn = gr.Button("Ejecutar")
 btn.click(aether, inputs=[inp, session], outputs=out)
 demo.launch()
 
-yaml
-Copiar código
 
 
