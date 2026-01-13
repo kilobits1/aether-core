@@ -120,7 +120,163 @@ void loop() {
   digitalWrite(RELAY_PIN, LOW);
   delay(1000);
 }
+Estado: Código base funcional para ESP32.
+"""
+if "matematicas" in domains or "fisica" in domains:
+return """
+💻 CÓDIGO PYTHON (MODELO CIENTÍFICO)
 
+python
+Copiar código
+import numpy as np
 
+t = np.linspace(0, 10, 100)
+x = np.sin(t)
+
+print("Modelo generado")
+Estado: Listo para simulación.
+"""
+return """
+💻 CÓDIGO GENERAL (PSEUDOCÓDIGO)
+
+text
+Copiar código
+INICIO
+  leer variables
+  procesar modelo
+  generar salida
+FIN
+"""
+
+======================================================
+ARTEFACT GENERATORS
+======================================================
+def generate_scientific_design(command, domains):
+return f"""
+📄 DISEÑO CIENTÍFICO
+
+Objetivo:
+{command}
+
+Dominios:
+{", ".join(domains)}
+
+Incluye:
+
+Base teórica
+
+Supuestos
+
+Aplicaciones
+"""
+
+def generate_engineering_design(command, domains):
+return f"""
+⚙️ DISEÑO DE INGENIERÍA
+
+Objetivo:
+{command}
+
+Dominios:
+{", ".join(domains)}
+
+Incluye:
+
+Arquitectura
+
+Componentes
+
+Control
+"""
+
+def generate_mathematical_model(command):
+return f"""
+📐 MODELO MATEMÁTICO
+
+Problema:
+{command}
+
+Incluye:
+
+Variables
+
+Ecuaciones
+
+Método
+"""
+
+======================================================
+CORE BRAIN
+======================================================
+def aether(command, session=DEFAULT_SESSION):
+cmd_type = classify_command(command)
+mode = select_mode(command)
+domains = detect_domains(command)
+artifact = decide_output_artifact(cmd_type, mode, domains)
+
+bash
+Copiar código
+log_event({
+    "command": command,
+    "type": cmd_type,
+    "mode": mode,
+    "domains": domains,
+    "artifact": artifact,
+    "session": session
+})
+
+if cmd_type == "system":
+    return f"""
+🧠 ESTADO AETHER
+
+Agente: {AGENT_NAME}
+Modo: {EXECUTION_MODE}
+Sesión: {session}
+
+Capacidades:
+
+Ciencia
+
+Ingeniería
+
+Código
+
+Modelado
+"""
+
+if artifact == "code":
+return generate_code(command, domains)
+
+if artifact == "engineering_design":
+return generate_engineering_design(command, domains)
+
+if artifact == "mathematical_model":
+return generate_mathematical_model(command)
+
+return generate_scientific_design(command, domains)
+
+======================================================
+UI
+======================================================
+with gr.Blocks(title="AETHER CORE") as demo:
+gr.Markdown("## 🧠 Aether Core — Generador de Artefactos Reales")
+gr.Markdown("Código · Ciencia · Ingeniería · Robótica · Medicina")
+
+makefile
+Copiar código
+session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
+inp = gr.Textbox(
+    label="Orden",
+    placeholder="Ej: Generar código ESP32 para relé / Diseñar nanobot médico",
+    lines=4
+)
+out = gr.Textbox(label="Artefacto generado", lines=30)
+
+btn = gr.Button("Ejecutar")
+btn.click(aether, inputs=[inp, session], outputs=out)
+demo.launch()
+
+yaml
+Copiar código
 
 
