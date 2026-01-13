@@ -27,7 +27,7 @@ EXECUTION_MODE = "SIMULATION"
 DEFAULT_SESSION = "default"
 
 # ======================================================
-# DOMAIN MAP (ONTOLOGÍA BASE)
+# DOMAIN MAP (ONTOLOGÍA BASE MULTIDISCIPLINARIA)
 # ======================================================
 DOMAIN_MAP = {
     "matematicas": ["ecuacion", "calculo", "modelo", "optimizacion"],
@@ -44,7 +44,7 @@ DOMAIN_MAP = {
 }
 
 # ======================================================
-# MODE SELECTION
+# MODE SELECTION (TIPO DE PENSAMIENTO)
 # ======================================================
 def select_mode(command):
     t = command.lower()
@@ -90,7 +90,7 @@ def log_event(data):
     db.collection("aether_memory").add(data)
 
 # ======================================================
-# HARDWARE ENGINE (EJEMPLO)
+# HARDWARE ENGINE (EJEMPLO BASE)
 # ======================================================
 def design_interruptor_inteligente():
     return """
@@ -143,8 +143,12 @@ Sesión: {session}
 Capacidades activas:
 - Multidominio
 - Memoria persistente
-- Diseño técnico
 - Análisis científico
+- Diseño de ingeniería
+- Arquitectura técnica
+
+Dominios cargados:
+{", ".join(DOMAIN_MAP.keys())}
 
 Estado: OPERATIVO
 """
@@ -155,14 +159,16 @@ Estado: OPERATIVO
     return f"""
 🧠 AETHER ACTIVO
 
-Comando: {command}
+Comando:
+{command}
 
 Tipo: {cmd_type}
 Modo cognitivo: {mode}
 Dominios detectados: {", ".join(domains)}
 
-Estado:
-Listo para análisis, diseño y expansión multidisciplinaria.
+Resultado:
+Análisis estructurado listo.
+Preparado para generación de modelos, diseños o artefactos técnicos.
 """
 
 # ======================================================
@@ -170,15 +176,17 @@ Listo para análisis, diseño y expansión multidisciplinaria.
 # ======================================================
 with gr.Blocks(title="AETHER CORE") as demo:
     gr.Markdown("## 🧠 Aether Core — Sistema Multidisciplinario")
-    gr.Markdown("Ciencia · Ingeniería · Robótica · Medicina · Electrónica")
+    gr.Markdown(
+        "Matemáticas · Física · Química · Biomedicina · Robótica · Electrónica · Aeroespacial"
+    )
 
     session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
     inp = gr.Textbox(
         label="Orden",
-        placeholder="Ej: Diseñar nanobot médico / estado",
+        placeholder="Ej: Diseñar nanobot médico para administrar fármacos / estado",
         lines=4
     )
-    out = gr.Textbox(label="Respuesta", lines=24)
+    out = gr.Textbox(label="Respuesta", lines=26)
 
     btn = gr.Button("Enviar orden")
     btn.click(aether, inputs=[inp, session], outputs=out)
