@@ -265,10 +265,21 @@ with gr.Blocks(title="AETHER CORE") as demo:
     btn = gr.Button("EJECUTAR")
     btn.click(lambda c, s: aether(c, s, level=10), inputs=[inp, session], outputs=out)
 # ======================================================
-# 11. COLA DE TAREAS AUTÓNOMA
+# AETHER — NIVEL 11 + 12
+# AUTONOMÍA REAL + MODELO DEL YO
 # ======================================================
+
+import datetime
+import asyncio
 from collections import deque
 
+# ======================================================
+# 11. AUTONOMÍA REAL
+# ======================================================
+
+# ---------------------------
+# 11.1 COLA DE TAREAS
+# ---------------------------
 AETHER_TASK_QUEUE = deque()
 
 def enqueue_task(command, reason="internal"):
@@ -282,6 +293,124 @@ def dequeue_task():
     if AETHER_TASK_QUEUE:
         return AETHER_TASK_QUEUE.popleft()
     return None
+
+
+# ---------------------------
+# 11.2 OBJETIVOS → COMANDOS
+# ---------------------------
+def goals_to_internal_commands(goals):
+    commands = []
+
+    for g in goals:
+        if "Optimizar" in g:
+            commands.append("Optimizar procesos internos")
+        elif "Mejorar" in g:
+            commands.append("Analizar resultados previos y ajustar estrategia")
+        elif "Explorar" in g:
+            commands.append("Explorar nuevas soluciones al dominio actual")
+
+    return commands
+
+
+# ---------------------------
+# 11.3 TRIGGERS TEMPORALES
+# ---------------------------
+def temporal_triggers():
+    # Trigger por energía
+    if AETHER_STATE["energy"] < 25:
+        enqueue_task("Entrar en modo recuperación", "low_energy")
+
+    # Trigger periódico
+    enqueue_task("Revisar objetivos activos", "periodic")
+
+
+# ---------------------------
+# 11.4 SCHEDULER AUTÓNOMO
+# ---------------------------
+async def autonomous_scheduler(interval_seconds=15):
+    while True:
+        temporal_triggers()
+
+        task = dequeue_task()
+        if task:
+            print(f"[AETHER AUTÓNOMO] Ejecutando: {task['command']}")
+            aether(task["command"], DEFAULT_SESSION, level=10)
+
+        await asyncio.sleep(interval_seconds)
+
+
+# ---------------------------
+# 11.5 ACTIVADOR
+# ---------------------------
+def start_autonomy():
+    asyncio.run(autonomous_scheduler())
+
+
+# ======================================================
+# 12. MODELO DEL YO (AUTO-REPRESENTACIÓN)
+# ======================================================
+
+# ---------------------------
+# 12.1 SELF MODEL
+# ---------------------------
+AETHER_SELF_MODEL = {
+    "identity": "AETHER",
+    "capabilities": [
+        "razonamiento",
+        "planificación",
+        "simulación",
+        "auto-evaluación"
+    ],
+    "limitations": [
+        "no acceso directo al mundo físico",
+        "dependencia de input simbólico",
+        "aprendizaje no persistente"
+    ],
+    "values": [
+        "mejora continua",
+        "coherencia",
+        "eficiencia"
+    ],
+    "self_history": []
+}
+
+
+# ---------------------------
+# 12.2 ACTUALIZAR YO
+# ---------------------------
+def update_self_model(command, outcome, quality):
+    AETHER_SELF_MODEL["self_history"].append({
+        "command": command,
+        "quality": quality,
+        "timestamp": datetime.datetime.utcnow().isoformat()
+    })
+
+    # Ajuste simple de autovaloración
+    if quality < 2 and "auto-mejora" not in AETHER_SELF_MODEL["values"]:
+        AETHER_SELF_MODEL["values"].append("auto-mejora")
+
+
+# ---------------------------
+# 12.3 AUTO-DESCRIPCIÓN
+# ---------------------------
+def self_description():
+    return {
+        "identity": AETHER_SELF_MODEL["identity"],
+        "capabilities": AETHER_SELF_MODEL["capabilities"],
+        "limitations": AETHER_SELF_MODEL["limitations"],
+        "values": AETHER_SELF_MODEL["values"],
+        "experience_count": len(AETHER_SELF_MODEL["self_history"])
+    }
+
+
+# ======================================================
+# 12.4 INTEGRACIÓN (LLAMAR DESDE aether_v10)
+# ======================================================
+# Añadir al final de aether_v10():
+# update_self_model(command, output, quality)
+#
+# Opcional:
+# self_description()
 
 demo.launch()
 
