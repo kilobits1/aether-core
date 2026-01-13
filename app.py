@@ -587,5 +587,23 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     demo.load(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
 
 PORT = int(os.environ.get("PORT", "7860"))
-demo.queue()
-demo.launch(server_name="0.0.0.0", server_port=PORT)
+
+# Montar FastAPI + Gradio
+try:
+    from fastapi import FastAPI
+    import uvicorn
+    from api import app as api_app
+    from gradio.routes import mount_gradio_app
+
+    app = FastAPI()
+    # monta la API real
+    app.mount("/", api_app)
+    # monta gradio bajo /ui
+    app = mount_gradio_app(app, demo, path="/ui")
+
+    uvicorn.run(app, host="0.0.0.0", port=PORT)
+except Exception:
+    # fallback: solo gradio si fastapi/uvicorn no están listos
+    demo.queue()
+    demo.launch(server_name="0.0.0.0", server_port=PORT)
+
