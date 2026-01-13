@@ -455,7 +455,7 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
     with gr.Row():
-        chat = gr.Chatbot(label="AETHER Chat", height=420)
+        chat = gr.Chatbot(label="AETHER Chat", height=420, type="messages")
     user_msg = gr.Textbox(label="Escribe aquí", placeholder="Ej: hola aether / optimizar algoritmo IA", lines=2)
 
     with gr.Row():
@@ -470,16 +470,17 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     # --------- FUNCIONES UI ----------
     def chat_send(message, history):
-        message = (message or "").strip()
-        if not message:
-            return history, ""
-
-        decision, result = run_now(message)
-        reply = format_reply(decision, result)
-
-        history = history or []
-        history.append((message, reply))
+    message = (message or "").strip()
+    if not message:
         return history, ""
+
+    decision, result = run_now(message)
+    reply = format_reply(decision, result)
+
+    history = history or []
+    history.append({"role": "user", "content": message})
+    history.append({"role": "assistant", "content": reply})
+    return history, ""
 
     def ui_enqueue_chat(cmd, prio_value):
         ok = enqueue_task(cmd, int(prio_value), source="external")
