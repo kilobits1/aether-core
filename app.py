@@ -143,6 +143,114 @@ Gráfico generado:
 
 Estado: CIENCIA + APRENDIZAJE COMPLETADOS
 """
+# ======================================================
+# 12. META-ANÁLISIS (NIVEL 8)
+# ======================================================
+def meta_analysis(command, output, quality, decision):
+    insights = []
+
+    if quality <= 1:
+        insights.append("Respuesta débil: aumentar profundidad")
+    elif quality == 2:
+        insights.append("Respuesta correcta pero optimizable")
+    else:
+        insights.append("Respuesta sólida y reutilizable")
+
+    if decision["confidence"] < 0.7:
+        insights.append("Confianza baja: reforzar razonamiento")
+
+    if "CIENCIA" in output:
+        insights.append("Patrón científico exitoso")
+
+    return insights
+
+
+# ======================================================
+# 13. AUTO-MEJORA AUTÓNOMA 🔁
+# ======================================================
+def self_improve(command, insights):
+    actions = []
+
+    for i in insights:
+        if "débil" in i:
+            actions.append("Agregar más simulaciones")
+        if "Confianza" in i or "baja" in i:
+            actions.append("Validar con datos adicionales")
+        if "científico" in i:
+            actions.append("Guardar modelo como referencia")
+
+    if db:
+        db.collection("aether_self_improvement").add({
+            "command": command,
+            "insights": insights,
+            "actions": actions,
+            "timestamp": datetime.datetime.utcnow().isoformat()
+        })
+
+    return actions
+
+
+# ======================================================
+# 14. PRIORIDAD AUTÓNOMA 🧭
+# ======================================================
+def autonomous_priority(domains):
+    if "ia" in domains:
+        return "ALTA"
+    if "fisica" in domains or "matematicas" in domains:
+        return "MEDIA-ALTA"
+    if "multimedia" in domains:
+        return "MEDIA"
+    return "NORMAL"
+
+
+# ======================================================
+# 15. CORE BRAIN EXTENDIDO 🧠 (NIVEL 8)
+# ======================================================
+def aether(command, session=DEFAULT_SESSION):
+
+    domains = detect_domains(command)
+    decision = decide_engine(command, domains)
+    plan = build_action_plan(decision, command)
+    priority = autonomous_priority(domains)
+
+    if decision["mode"] == "scientific":
+        output = scientific_engine(command)
+    else:
+        output = f"""
+🧠 AETHER — RESPUESTA INTELIGENTE
+
+Orden:
+{command}
+
+Plan:
+- """ + "\n- ".join(plan)
+
+    quality = self_evaluate(output)
+    insights = meta_analysis(command, output, quality, decision)
+    improvements = self_improve(command, insights)
+
+    store_memory(command, output, domains, session, quality)
+
+    return f"""
+🧠 AETHER CORE — NIVEL 8 EVOLUTIVO
+
+DECISIÓN:
+- Modo: {decision['mode']}
+- Confianza: {decision['confidence']}
+- Prioridad: {priority}
+- Razón: {decision['reason']}
+
+{output}
+
+🧩 META-ANÁLISIS:
+- """ + "\n- ".join(insights) + """
+
+🔁 AUTO-MEJORA:
+- """ + "\n- ".join(improvements) + f"""
+
+📊 Autoevaluación: {quality}/3
+ESTADO: APRENDIENDO Y CORRIGIÉNDOSE
+"""
 
 # ======================================================
 # 8. REPORTE CIENTÍFICO (PDF)
