@@ -1,5 +1,6 @@
 # plugins/tasks_ai.py
 import os
+import re
 import uuid
 import threading
 from datetime import datetime, timezone
@@ -36,64 +37,81 @@ def _ensure_runner():
         _runner_thread = threading.Thread(target=_runner.start_loop, daemon=True)
         _runner_thread.start()
 
+def _enqueue(task_type: str, payload: dict, priority=20, timeout_s=30, max_attempts=3):
+    _ensure_runner()
+    tid = f"task-{uuid.uuid4().hex}"
+    _store.enqueue(
+        tid, task_type, payload,
+        priority=int(priority),
+        max_attempts=int(max_attempts),
+        timeout_s=int(timeout_s),
+        run_after=_utc_now_iso(),
+    )
+    return tid
+
+# --------- NLP simple (reglas) ---------
+def _nlp_to_task(text: str):
+    t = (text or "").strip()
+    tl = t.lower()
+
+    # crear archivo: "crea un archivo <path> con <texto>"
+    m = re.search(r"(crea|crear|escribe|guardar)\s+(un\s+)?archivo\s+([^\s]+)\s+(con|texto)\s+(.+)$", tl, re.IGNORECASE)
+    if m:
+        # ojo: path en el texto original para respetar mayúsculas
+        path = t.split()[t.lower().split().index("archivo") + 1]
+        # texto: todo después de " con " o " texto "
+        if " con " in t.lower():
+            content = t.split(" con ", 1)[1]
+        elif " texto " in t.lower():
+            content = t.split(" texto ", 1)[1]
+        else:
+            content = ""
+        return ("files.write_text", {"path": path, "text": content})
+
+    # leer archivo: "lee <path>" o "leer archivo <path>"
+    m = re.search(r"^(lee|leer)\s+(archivo\s+)?(.+)$", tl, re.IGNORECASE)
+    if m:
+        path = t.split()[-1]
+        return ("files.read_text", {"path": path, "max_bytes": 200000})
+
+    # listar: "lista archivos" / "listar" / "muestra archivos"
+    if any(k in tl for k in ["lista archivos", "listar archivos", "muestra archivos", "listar", "lista directorio", "lista carpeta"]):
+        return ("files.list_dir", {"path": ""})
+
+    # ejecutar python: "ejecuta python <codigo>" o "python: <codigo>"
+    if tl.startswith("ejecuta python "):
+        code = t[len("ejecuta python "):]
+        return ("shell.exec", {"cmd": ["python", "-c", code]})
+    if tl.startswith("python:"):
+        code = t.split(":", 1)[1].strip()
+        return ("shell.exec", {"cmd": ["python", "-c", code]})
+
+    return (None, None)
+
 def can_handle(command: str) -> bool:
-    c = (command or "").lower().strip()
-    return c.startswith("task ")
+    c = (command or "").strip().lower()
+    if c.startswith("task "):
+        return True
+    # lenguaje natural (keywords)
+    return any(k in c for k in ["crea", "crear", "escribe", "guardar", "lee", "leer", "lista", "listar", "muestra", "ejecuta python", "python:"])
 
 def run(command: str):
-    """
-    Comandos:
-      task a        -> crea /tmp/aether/workspace/test/hello.txt
-      task b        -> lista /tmp/aether/workspace
-      task c        -> ejecuta python -c "print('runner ok')"
-      task last     -> lista tareas recientes
-      task show <id>
-    """
     _ensure_runner()
     c = (command or "").strip()
     cl = c.lower().strip()
 
-    # task a: write file
+    # --- comandos clásicos ---
     if cl == "task a":
-        tid = f"task-{uuid.uuid4().hex}"
-        _store.enqueue(
-            tid,
-            "files.write_text",
-            {"path": "test/hello.txt", "text": "AETHER v26 OK (real)\n"},
-            priority=10,
-            max_attempts=3,
-            timeout_s=30,
-            run_after=_utc_now_iso(),
-        )
-        return {"ok": True, "msg": f"Encolada TASK A real", "task_id": tid, "file": "workspace/test/hello.txt"}
+        tid = _enqueue("files.write_text", {"path": "test/hello.txt", "text": "AETHER v26 OK (real)\n"}, priority=10)
+        return {"ok": True, "msg": "Encolada TASK A", "task_id": tid}
 
-    # task b: list dir
     if cl == "task b":
-        tid = f"task-{uuid.uuid4().hex}"
-        _store.enqueue(
-            tid,
-            "files.list_dir",
-            {"path": ""},
-            priority=20,
-            max_attempts=3,
-            timeout_s=30,
-            run_after=_utc_now_iso(),
-        )
-        return {"ok": True, "msg": "Encolada TASK B real", "task_id": tid}
+        tid = _enqueue("files.list_dir", {"path": ""}, priority=20)
+        return {"ok": True, "msg": "Encolada TASK B", "task_id": tid}
 
-    # task c: shell exec
     if cl == "task c":
-        tid = f"task-{uuid.uuid4().hex}"
-        _store.enqueue(
-            tid,
-            "shell.exec",
-            {"cmd": ["python", "-c", "print('runner ok')"]},
-            priority=5,
-            max_attempts=2,
-            timeout_s=30,
-            run_after=_utc_now_iso(),
-        )
-        return {"ok": True, "msg": "Encolada TASK C real", "task_id": tid}
+        tid = _enqueue("shell.exec", {"cmd": ["python", "-c", "print('runner ok')"]}, priority=5)
+        return {"ok": True, "msg": "Encolada TASK C", "task_id": tid}
 
     if cl in ("task last", "task recent"):
         return {"ok": True, "recent": _store.list_recent(10)}
@@ -102,8 +120,10 @@ def run(command: str):
         tid = c.split(" ", 2)[2].strip()
         return {"ok": True, "task": _store.get_task(tid)}
 
-    return {
-        "ok": False,
-        "error": "Comando no reconocido",
-        "help": ["task a", "task b", "task c", "task last", "task show <id>"],
-    }
+    # --- lenguaje natural ---
+    task_type, payload = _nlp_to_task(c)
+    if task_type:
+        tid = _enqueue(task_type, payload, priority=15)
+        return {"ok": True, "msg": f"Encolada (NL): {task_type}", "task_id": tid, "payload": payload}
+
+    return {"ok": False, "error": "No entendí el comando", "help": ["task a", "task last", "crea un archivo X con Y", "lee X", "lista archivos", "ejecuta python <code>"]}
