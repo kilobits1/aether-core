@@ -31,7 +31,7 @@ STRATEGIC_FILE = os.path.join(DATA_DIR, "aether_strategic.json")
 LOG_FILE = os.path.join(DATA_DIR, "aether_log.json")
 DASHBOARD_FILE = os.path.join(DATA_DIR, "aether_dashboard.json")
 
-MODULES_DIR = "modules"  # dentro del repo
+MODULES_DIR = "plugins"  # dentro del repo
 os.makedirs(MODULES_DIR, exist_ok=True)
 
 MAX_MEMORY_ENTRIES = 500
