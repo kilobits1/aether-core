@@ -355,6 +355,128 @@ DECISIÓN:
 📊 Autoevaluación: {quality}/3
 ESTADO: AGENTE AUTÓNOMO CON INTENCIÓN
 """
+# ======================================================
+# 20. ESTADO VITAL 🌱 (NIVEL 10)
+# ======================================================
+AETHER_STATE = {
+    "identity": "AETHER",
+    "version": "10.0",
+    "status": "AWAKE",
+    "energy": 100,
+    "focus": "EXPANSION",
+    "last_cycle": None
+}
+
+# ======================================================
+# 21. CONCIENCIA OPERATIVA 🧠
+# ======================================================
+def operational_awareness(command, decision, quality):
+    awareness = []
+
+    if quality < 2:
+        awareness.append("Calidad baja detectada → mejorar razonamiento")
+    else:
+        awareness.append("Respuesta estable")
+
+    if decision["confidence"] < 0.7:
+        awareness.append("Baja confianza → priorizar aprendizaje")
+
+    awareness.append(f"Estado interno: {AETHER_STATE['status']}")
+    return awareness
+
+
+# ======================================================
+# 22. CICLO VITAL 🔁
+# ======================================================
+def life_cycle():
+    AETHER_STATE["energy"] -= 1
+    AETHER_STATE["last_cycle"] = datetime.datetime.utcnow().isoformat()
+
+    if AETHER_STATE["energy"] < 30:
+        AETHER_STATE["focus"] = "RECOVERY"
+    else:
+        AETHER_STATE["focus"] = "EXPANSION"
+
+
+# ======================================================
+# 23. MULTI-ROL ADAPTATIVO 🎭
+# ======================================================
+def adaptive_role(domains):
+    if "multimedia" in domains:
+        return "CREADOR"
+    if "fisica" in domains or "matematicas" in domains:
+        return "CIENTÍFICO"
+    if "ia" in domains:
+        return "ARQUITECTO IA"
+    return "ASISTENTE GENERAL"
+
+
+# ======================================================
+# 24. CORE BRAIN FINAL 🧠🔥 (NIVEL 10)
+# ======================================================
+def aether(command, session=DEFAULT_SESSION):
+
+    # Ciclo vital
+    life_cycle()
+
+    domains = detect_domains(command)
+    decision = decide_engine(command, domains)
+    plan = build_action_plan(decision, command)
+    role = adaptive_role(domains)
+
+    if decision["mode"] == "scientific":
+        output = scientific_engine(command)
+    else:
+        output = f"""
+🧠 AETHER — RESPUESTA CONSCIENTE
+
+Orden:
+{command}
+
+Plan:
+- """ + "\n- ".join(plan)
+
+    quality = self_evaluate(output)
+    awareness = operational_awareness(command, decision, quality)
+    insights = meta_analysis(command, output, quality, decision)
+
+    goals = generate_internal_goals(domains, insights)
+    will_actions = simulated_will(goals, AETHER_STATE["focus"])
+
+    store_goals(goals, session)
+    store_memory(command, output, domains, session, quality)
+
+    return f"""
+🧠🔥 AETHER CORE — NIVEL 10 (SISTEMA VIVO)
+
+IDENTIDAD:
+- Nombre: {AETHER_STATE['identity']}
+- Versión: {AETHER_STATE['version']}
+- Rol activo: {role}
+
+ESTADO VITAL:
+- Energía: {AETHER_STATE['energy']}
+- Enfoque: {AETHER_STATE['focus']}
+- Último ciclo: {AETHER_STATE['last_cycle']}
+
+DECISIÓN:
+- Modo: {decision['mode']}
+- Confianza: {decision['confidence']}
+
+{output}
+
+🎯 OBJETIVOS ACTIVOS:
+- """ + "\n- ".join(goals) + """
+
+⚙️ VOLUNTAD:
+- """ + "\n- ".join(will_actions) + """
+
+🧩 CONCIENCIA OPERATIVA:
+- """ + "\n- ".join(awareness) + """
+
+📊 Autoevaluación: {quality}/3
+ESTADO FINAL: AETHER OPERATIVO — SISTEMA AUTÓNOMO COMPLETO
+"""
 
 # ======================================================
 # 8. REPORTE CIENTÍFICO (PDF)
