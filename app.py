@@ -1,12 +1,11 @@
 # ======================================================
-# AETHER CORE — PRO TOTAL (HF SPACES) + CHAT (MESSAGES ONLY)
-# FIXES INCLUIDOS:
-#   1) Chatbot type="messages" y handler que SIEMPRE devuelve dicts role/content.
-#   2) demo1 auto-creado al boot.
-#   3) DEDUP: internal no se dedupea; external sí.
-#   4) Cola separada del chat.
-#   5) Worker ejecuta comando real.
-#   6) FastAPI/Gradio mount ultra-tolerante (api.py opcional).
+# AETHER CORE — PRO TOTAL (HF SPACES) — GRADIO ONLY (NO FASTAPI)
+# Objetivo: 0 runtime-crash en HF.
+# Incluye:
+#   - Chat type="messages" (solo dict role/content)
+#   - Cola + scheduler
+#   - Plugins hot-reload *_ai.py
+#   - Logs + dashboard + demo1 export
 # ======================================================
 
 import os
@@ -37,14 +36,13 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # -----------------------------
 # VERSIONADO Y ARCHIVOS
 # -----------------------------
-AETHER_VERSION = "3.4.8-pro-total-hf-messages-stable"
+AETHER_VERSION = "3.4.9-pro-total-hf-gradio-only-stable"
 
 STATE_FILE = os.path.join(DATA_DIR, "aether_state.json")
 MEMORY_FILE = os.path.join(DATA_DIR, "aether_memory.json")
 STRATEGIC_FILE = os.path.join(DATA_DIR, "aether_strategic.json")
 LOG_FILE = os.path.join(DATA_DIR, "aether_log.json")
 DASHBOARD_FILE = os.path.join(DATA_DIR, "aether_dashboard.json")
-
 DEMO1_FILE = os.path.join(DATA_DIR, "demo1.json")
 
 MODULES_DIR = "plugins"
@@ -124,12 +122,7 @@ def ensure_demo1():
     try:
         save_json_atomic(
             DEMO1_FILE,
-            {
-                "name": "demo1",
-                "created_at": safe_now(),
-                "events": [],
-                "notes": "Snapshot inicial auto-creado al boot",
-            },
+            {"name": "demo1", "created_at": safe_now(), "events": [], "notes": "auto-created"},
         )
         return True
     except Exception:
@@ -198,6 +191,7 @@ def enqueue_task(command, priority=5, source="external"):
     if not command:
         return False
 
+    # DEDUP solo para external
     if source != "internal":
         key = f"{command}:{source}"
         with dedup_lock:
@@ -211,12 +205,7 @@ def enqueue_task(command, priority=5, source="external"):
     TASK_QUEUE.put(
         (
             dyn,
-            {
-                "id": str(uuid.uuid4()),
-                "command": command,
-                "source": source,
-                "created_at": safe_now(),
-            },
+            {"id": str(uuid.uuid4()), "command": command, "source": source, "created_at": safe_now()},
         )
     )
     log_event("ENQUEUE", {"command": command, "priority": dyn, "source": source})
@@ -231,7 +220,7 @@ def detect_domains(command):
     d = set()
     if any(k in c for k in ["física", "ecuación", "modelo", "simulación", "simular"]):
         d.add("science")
-    if c.startswith("task ") or "reload" in c or "plugin" in c or "plugins" in c or "modulos" in c or "módulos" in c:
+    if c.startswith("task ") or "reload" in c or "plugin" in c or "plugins" in c:
         d.add("ai")
     if any(k in c for k in ["ia", "algoritmo", "llm", "embedding", "hola", "hello"]):
         d.add("ai")
@@ -276,7 +265,7 @@ def execute_general(command):
     return {"success": True, "result": (command or "").upper()}
 
 # -----------------------------
-# MÓDULOS IA HOT-RELOAD
+# PLUGINS HOT-RELOAD
 # -----------------------------
 def reload_ai_modules():
     loaded = {}
@@ -286,9 +275,7 @@ def reload_ai_modules():
         files = []
 
     for fn in files:
-        if not fn.endswith("_ai.py"):
-            continue
-        if fn.startswith("_"):
+        if not fn.endswith("_ai.py") or fn.startswith("_"):
             continue
 
         name = fn[:-3]
@@ -474,12 +461,11 @@ def start_aether():
     return "✅ AETHER iniciado correctamente."
 
 # -----------------------------
-# CHAT SÍNCRONO (visible)
+# CHAT (sync)
 # -----------------------------
 def run_now(command: str):
     domains = detect_domains(command)
     decision = decide_engine(command, domains)
-
     result = obedient_execution(command, decision)
     success = bool(result.get("success"))
 
@@ -508,19 +494,38 @@ def run_now(command: str):
 def format_reply(decision, result):
     if not result.get("success"):
         return f"⛔ Error: {result.get('error', 'unknown_error')}"
-
     mode = decision.get("mode", "general")
-
     if mode == "ai_module":
         mod = result.get("module") or "ai_module"
         payload = json.dumps(result.get("result"), indent=2, ensure_ascii=False)
         return f"🧩 Plugin: {mod}\n\n{payload}"
-
     if mode == "scientific":
         payload = json.dumps(result.get("result"), indent=2, ensure_ascii=False)
         return f"🔬 Resultado científico:\n\n{payload}"
-
     return str(result.get("result"))
+
+def normalize_to_messages(history):
+    if not history or not isinstance(history, list):
+        return []
+    out = []
+    for h in history:
+        if isinstance(h, dict) and "role" in h and "content" in h:
+            out.append({"role": str(h["role"]), "content": str(h["content"])})
+        elif isinstance(h, (tuple, list)) and len(h) == 2:
+            out.append({"role": "user", "content": str(h[0])})
+            out.append({"role": "assistant", "content": str(h[1])})
+    return out
+
+def chat_send(message, history):
+    message = (message or "").strip()
+    history = normalize_to_messages(history)
+    if not message:
+        return history, ""
+    decision, result = run_now(message)
+    reply = format_reply(decision, result)
+    history.append({"role": "user", "content": message})
+    history.append({"role": "assistant", "content": reply})
+    return history, ""
 
 # -----------------------------
 # UI HELPERS
@@ -537,7 +542,6 @@ def ui_status():
         }
     with modules_lock:
         mods = list(LOADED_MODULES.keys())
-
     return json.dumps(
         {
             "state": s,
@@ -572,37 +576,7 @@ def ui_tail_logs(n=50):
     return "\n".join(json.dumps(x, ensure_ascii=False) for x in tail)
 
 # -----------------------------
-# CHATBOT: NORMALIZADOR A MESSAGES
-# -----------------------------
-def normalize_to_messages(history):
-    if not history or not isinstance(history, list):
-        return []
-    out = []
-    for h in history:
-        if isinstance(h, dict) and "role" in h and "content" in h:
-            out.append({"role": str(h["role"]), "content": str(h["content"])})
-        elif isinstance(h, (tuple, list)) and len(h) == 2:
-            out.append({"role": "user", "content": str(h[0])})
-            out.append({"role": "assistant", "content": str(h[1])})
-    return out
-
-def chat_send(message, history):
-    message = (message or "").strip()
-    history = normalize_to_messages(history)
-
-    if not message:
-        return history, ""
-
-    decision, result = run_now(message)
-    reply = format_reply(decision, result)
-
-    history.append({"role": "user", "content": message})
-    history.append({"role": "assistant", "content": reply})
-
-    return history, ""
-
-# -----------------------------
-# GRADIO UI
+# GRADIO UI (HF SAFE)
 # -----------------------------
 with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     gr.Markdown("## AETHER CORE — PRO TOTAL")
@@ -611,12 +585,7 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
     chat = gr.Chatbot(label="AETHER Chat", height=420, type="messages")
-
-    user_msg = gr.Textbox(
-        label="Escribe aquí (Chat)",
-        placeholder="Ej: hola aether / reload plugins",
-        lines=2,
-    )
+    user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins", lines=2)
 
     with gr.Row():
         btn_send = gr.Button("Enviar (Chat)")
@@ -625,7 +594,6 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     gr.Markdown("---")
     gr.Markdown("### Cola de tareas (separado del chat)")
-
     task_cmd = gr.Textbox(label="Comando para cola", placeholder="Ej: revisar estado interno", lines=1)
     prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (1=alta · 20=baja)")
     btn_enqueue = gr.Button("Enqueue Task (cola)")
@@ -651,46 +619,11 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     demo.load(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
 
 # -----------------------------
-# SERVIDOR: FastAPI (opcional) + /ui + redirect / -> /ui
+# HF ENTRYPOINT
 # -----------------------------
+# En Spaces, esto es lo más estable:
+# - NO uvicorn.run
+# - NO mounts
 PORT = int(os.environ.get("PORT", "7860"))
-
-try:
-    from fastapi import FastAPI
-    from fastapi.responses import RedirectResponse
-    import uvicorn
-
-    try:
-        from api import app as api_app
-        API_ROUTER = api_app.router
-    except Exception:
-        API_ROUTER = None
-
-    try:
-        from gradio.routes import mount_gradio_app
-    except Exception:
-        try:
-            from gradio import mount_gradio_app
-        except Exception:
-            mount_gradio_app = None
-
-    root = FastAPI()
-
-    if API_ROUTER is not None:
-        root.include_router(API_ROUTER)
-
-    if mount_gradio_app is not None:
-        root = mount_gradio_app(root, demo, path="/ui")
-
-        @root.get("/")
-        def _home():
-            return RedirectResponse(url="/ui")
-
-        uvicorn.run(root, host="0.0.0.0", port=PORT)
-    else:
-        demo.queue()
-        demo.launch(server_name="0.0.0.0", server_port=PORT)
-
-except Exception:
-    demo.queue()
-    demo.launch(server_name="0.0.0.0", server_port=PORT)
+demo.queue()
+demo.launch(server_name="0.0.0.0", server_port=PORT)
