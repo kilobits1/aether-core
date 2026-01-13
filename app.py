@@ -4,6 +4,7 @@ import json
 import os
 import firebase_admin
 from firebase_admin import credentials, firestore
+import numpy as np
 
 # ======================================================
 # 1. FIREBASE INIT
@@ -24,7 +25,7 @@ db = firestore.client() if firebase_key else None
 # 2. CORE CONFIG
 # ======================================================
 AGENT_NAME = "aether-core"
-EXECUTION_MODE = "SIMULATION"  # REAL en el futuro
+EXECUTION_MODE = "SIMULATION"
 DEFAULT_SESSION = "default"
 
 # ======================================================
@@ -89,7 +90,42 @@ def decide_artifact(mode, domains):
     return "technical_plan"
 
 # ======================================================
-# 6. MEMORY SYSTEM
+# 6. MEMORY SYSTEM (INTELIGENTE)
+# ======================================================
+def text_to_vector(text, dim=128):
+    np.random.seed(abs(hash(text)) % (2**32))
+    return np.random.rand(dim).tolist()
+
+def cosine_similarity(v1, v2):
+    v1, v2 = np.array(v1), np.array(v2)
+    return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
+
+def store_memory(command, response, domains, session):
+    if not db:
+        return
+    db.collection("aether_semantic_memory").add({
+        "command": command,
+        "response": response,
+        "domains": domains,
+        "session": session,
+        "vector": text_to_vector(command),
+        "time": datetime.datetime.utcnow().isoformat()
+    })
+
+def retrieve_similar_memories(command, top_k=3):
+    if not db:
+        return []
+    qv = text_to_vector(command)
+    memories = []
+    for doc in db.collection("aether_semantic_memory").stream():
+        data = doc.to_dict()
+        sim = cosine_similarity(qv, data["vector"])
+        memories.append((sim, data))
+    memories.sort(reverse=True, key=lambda x: x[0])
+    return [m for _, m in memories[:top_k]]
+
+# ======================================================
+# 7. EVENT LOG
 # ======================================================
 def log_event(data):
     if not db:
@@ -102,19 +138,17 @@ def log_event(data):
     db.collection("aether_memory").add(data)
 
 # ======================================================
-# 7. ARTIFACT GENERATORS
+# 8. ARTIFACT GENERATORS
 # ======================================================
 def generate_scientific_design(cmd, domains):
     return f"""📄 DISEÑO CIENTÍFICO AVANZADO
 Objetivo: {cmd}
 Dominios: {", ".join(domains)}
-
-1. Fundamentación teórica
-2. Principios científicos
-3. Modelo conceptual
-4. Supuestos críticos
-5. Aplicaciones reales
-Estado: Listo para simulación.
+1. Fundamentación
+2. Principios
+3. Modelo
+4. Supuestos
+5. Aplicaciones
 """
 
 def generate_engineering_design(cmd, domains):
@@ -122,33 +156,30 @@ def generate_engineering_design(cmd, domains):
     return f"""⚙️ DISEÑO DE INGENIERÍA
 Objetivo: {cmd}
 Dominios: {", ".join(domains)}
+1. Arquitectura
+2. Componentes
+3. Control
+4. Seguridad
+5. Prototipo
 
-1. Arquitectura del sistema
-2. Componentes clave
-3. Lógica de control
-4. Seguridad y límites
-5. Preparación para prototipo
-
---- FIRMWARE BASE ---
+--- FIRMWARE ---
 {firmware if firmware else "No requerido"}
 """
 
 def generate_mathematical_model(cmd):
     return f"""📐 MODELO MATEMÁTICO
 Problema: {cmd}
-
 1. Variables
 2. Ecuaciones
 3. Supuestos
-4. Método numérico
+4. Método
 5. Interpretación
 """
 
 def generate_technical_plan(cmd):
-    return f"""🧠 PLAN TÉCNICO GENERAL
+    return f"""🧠 PLAN TÉCNICO
 Objetivo: {cmd}
-
-1. Definición del problema
+1. Definición
 2. Estrategia
 3. Recursos
 4. Riesgos
@@ -156,9 +187,16 @@ Objetivo: {cmd}
 """
 
 # ======================================================
-# 8. CORE BRAIN
+# 9. CORE BRAIN (AETHER)
 # ======================================================
 def aether(command, session=DEFAULT_SESSION):
+    memories = retrieve_similar_memories(command)
+    memory_context = ""
+    if memories:
+        memory_context = "🧠 CONTEXTO RECORDADO:\n"
+        for m in memories:
+            memory_context += f"- {m['command']} ({m['domains']})\n"
+
     cmd_type = classify_command(command)
     mode = select_mode(command)
     domains = detect_domains(command)
@@ -174,28 +212,30 @@ def aether(command, session=DEFAULT_SESSION):
     })
 
     if cmd_type == "system":
-        return f"""🧠 ESTADO DE AETHER
+        output = f"""🧠 ESTADO DE AETHER
 Agente: {AGENT_NAME}
 Modo: {EXECUTION_MODE}
 Sesión: {session}
-Capacidades: Cognición · Ingeniería · Ciencia · Memoria
 Estado: OPERATIVO
 """
+    elif artifact == "scientific_design":
+        output = generate_scientific_design(command, domains)
+    elif artifact == "engineering_design":
+        output = generate_engineering_design(command, domains)
+    elif artifact == "mathematical_model":
+        output = generate_mathematical_model(command)
+    else:
+        output = generate_technical_plan(command)
 
-    if artifact == "scientific_design":
-        return generate_scientific_design(command, domains)
-    if artifact == "engineering_design":
-        return generate_engineering_design(command, domains)
-    if artifact == "mathematical_model":
-        return generate_mathematical_model(command)
-
-    return generate_technical_plan(command)
+    final_output = memory_context + "\n" + output
+    store_memory(command, final_output, domains, session)
+    return final_output
 
 # ======================================================
-# 9. UI
+# 10. UI
 # ======================================================
 with gr.Blocks(title="AETHER CORE") as demo:
-    gr.Markdown("## 🧠 AETHER CORE — Inteligencia Técnica Autónoma")
+    gr.Markdown("## 🧠 AETHER CORE — Inteligencia Técnica con Memoria")
     session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
     inp = gr.Textbox(label="Orden", lines=4)
     out = gr.Textbox(label="Resultado", lines=30)
