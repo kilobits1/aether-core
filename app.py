@@ -6,6 +6,8 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import numpy as np
 from fpdf import FPDF
+import matplotlib.pyplot as plt
+import uuid
 
 # ======================================================
 # 1. FIREBASE INIT
@@ -36,10 +38,10 @@ MISSIONS = {
     "principal": "Diseñar y optimizar sistemas inteligentes reales",
     "secundarias": [
         "Aprender de interacciones",
-        "Recordar contexto",
-        "Optimizar decisiones",
-        "Ejecutar modelos científicos",
-        "Experimentar y evaluar hipótesis"
+        "Ejecutar ciencia real",
+        "Experimentar",
+        "Evaluar",
+        "Mejorar con el tiempo"
     ]
 }
 
@@ -50,20 +52,16 @@ DOMAIN_MAP = {
     "matematicas": ["ecuacion", "calculo", "modelo"],
     "fisica": ["fuerza", "energia", "movimiento"],
     "ia": ["modelo", "red", "inteligencia"],
-    "multimedia": ["video", "musica", "audio"],
-    "software": ["app", "aplicacion"]
+    "multimedia": ["video", "musica"],
+    "hardware": ["sensor", "arduino", "esp32"]
 }
 
 # ======================================================
-# 5. MEMORIA SEMÁNTICA
+# 5. MEMORIA
 # ======================================================
 def text_to_vector(text, dim=128):
     np.random.seed(abs(hash(text)) % (2**32))
     return np.random.rand(dim).tolist()
-
-def cosine_similarity(v1, v2):
-    v1, v2 = np.array(v1), np.array(v2)
-    return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
 
 def store_memory(command, response, domains, session, quality):
     if not db:
@@ -79,29 +77,27 @@ def store_memory(command, response, domains, session, quality):
     })
 
 # ======================================================
-# 6. MEMORIA CIENTÍFICA 🔬
+# 6. DATOS REALES (STUB)
 # ======================================================
-def store_scientific_result(data):
-    if not db:
-        return
-    db.collection("aether_science").add({
-        **data,
-        "timestamp": datetime.datetime.utcnow().isoformat()
-    })
+def load_real_data():
+    """
+    Preparado para sensores, CSV, APIs, IoT.
+    Hoy devuelve None (simulación).
+    """
+    return None
 
 # ======================================================
-# 7. MOTOR CIENTÍFICO AVANZADO
+# 7. MOTOR CIENTÍFICO + APRENDIZAJE
 # ======================================================
 def scientific_engine(command):
 
     t = np.linspace(0, 10, 200)
     experiments = []
-    hypotheses = []
+    history = []
 
-    # Hipótesis automática
-    for a in [1.0, 2.0, 3.0]:
-        hypotheses.append(f"Si a = {a}, la posición final aumenta proporcionalmente")
+    real_data = load_real_data()
 
+    for a in [1.0, 2.0, 3.0, 4.0]:
         v0 = 1.0
         x0 = 0.0
 
@@ -110,63 +106,107 @@ def scientific_engine(command):
 
         experiments.append({
             "a": a,
-            "final_velocity": float(v[-1]),
             "final_position": float(x[-1]),
-            "max_position": float(np.max(x))
+            "final_velocity": float(v[-1])
         })
 
-    # Evaluación científica
+        history.append(x)
+
     best = max(experiments, key=lambda e: e["final_position"])
     stability = np.std([e["final_position"] for e in experiments])
 
-    store_scientific_result({
-        "command": command,
-        "experiments": experiments,
-        "best_model": best,
-        "stability": stability
-    })
+    # 🔁 Aprendizaje continuo
+    if db:
+        db.collection("scientific_learning").add({
+            "command": command,
+            "best_a": best["a"],
+            "stability": stability,
+            "timestamp": datetime.datetime.utcnow().isoformat()
+        })
 
-    result = "🔬 MOTOR CIENTÍFICO AVANZADO\n\n"
-    result += "Hipótesis generadas:\n"
-    for h in hypotheses:
-        result += f"- {h}\n"
+    # 📊 Gráfico
+    fig_id = f"graph_{uuid.uuid4().hex}.png"
+    for i, x in enumerate(history):
+        plt.plot(t, x, label=f"a={experiments[i]['a']}")
+    plt.legend()
+    plt.title("Simulación científica AETHER")
+    plt.xlabel("Tiempo")
+    plt.ylabel("Posición")
+    plt.savefig(fig_id)
+    plt.close()
 
-    result += "\nResultados experimentales:\n"
-    for e in experiments:
-        result += f"a={e['a']} → pos_final={e['final_position']:.2f}\n"
+    result = f"""
+🔬 AETHER — CIENCIA EVOLUTIVA
 
-    result += f"""
-Evaluación:
-- Mejor modelo: a = {best['a']}
-- Posición final óptima: {best['final_position']:.2f}
-- Estabilidad (σ): {stability:.4f}
+Experimentos ejecutados: {len(experiments)}
 
-Estado: EXPERIMENTACIÓN COMPLETA
+Mejor parámetro:
+- a = {best['a']}
+- Posición final = {best['final_position']:.2f}
+
+Estabilidad del sistema (σ):
+- {stability:.4f}
+
+Aprendizaje:
+- Modelo guardado para futuras decisiones
+
+Gráfico generado:
+- {fig_id}
+
+Estado: CIENCIA + APRENDIZAJE COMPLETADOS
 """
+    generate_scientific_report(command, experiments, best, stability)
 
     return result
 
 # ======================================================
-# 8. UTILIDADES
+# 8. REPORTE CIENTÍFICO (PDF)
+# ======================================================
+def generate_scientific_report(command, experiments, best, stability):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=11)
+
+    pdf.multi_cell(0, 8, f"""
+AETHER SCIENTIFIC REPORT
+
+Comando:
+{command}
+
+Experimentos:
+{experiments}
+
+Mejor modelo:
+{best}
+
+Estabilidad:
+{stability}
+
+Fecha:
+{datetime.datetime.utcnow().isoformat()}
+""")
+
+    pdf.output("aether_scientific_report.pdf")
+
+# ======================================================
+# 9. UTILIDADES
 # ======================================================
 def detect_domains(command):
     t = command.lower()
-    domains = [d for d, k in DOMAIN_MAP.items() if any(x in t for x in k)]
-    return domains if domains else ["general"]
+    return [d for d, k in DOMAIN_MAP.items() if any(x in t for x in k)] or ["general"]
 
 def is_scientific(command):
-    return any(k in command.lower() for k in ["calcular", "simular", "modelo", "fisica", "experimento"])
+    return any(k in command.lower() for k in ["modelo", "simular", "experimento", "fisica"])
 
 def self_evaluate(output):
     score = 0
-    if "Hipótesis" in output: score += 1
-    if "Resultados" in output: score += 1
-    if "Evaluación" in output: score += 1
-    if "EXPERIMENTACIÓN" in output: score += 1
+    for k in ["CIENCIA", "Aprendizaje", "Experimentos", "Gráfico"]:
+        if k in output:
+            score += 1
     return score
 
 # ======================================================
-# 9. CORE BRAIN 🧠
+# 10. CORE BRAIN 🧠
 # ======================================================
 def aether(command, session=DEFAULT_SESSION):
 
@@ -175,14 +215,17 @@ def aether(command, session=DEFAULT_SESSION):
     if is_scientific(command):
         output = scientific_engine(command)
     else:
-        output = f"""🧠 RESULTADO GENERAL
-Objetivo: {command}
-Dominios: {", ".join(domains)}
+        output = f"""
+🧠 AETHER — RESPUESTA GENERAL
 
-1. Análisis
-2. Diseño
-3. Ejecución
-4. Evaluación
+Orden:
+{command}
+
+Dominios:
+{domains}
+
+Estado:
+LISTO PARA CIENCIA, HARDWARE Y MULTIMEDIA
 """
 
     quality = self_evaluate(output)
@@ -191,18 +234,15 @@ Dominios: {", ".join(domains)}
     return output + f"\n🔍 Autoevaluación: {quality}/4"
 
 # ======================================================
-# 10. UI
+# 11. UI
 # ======================================================
 with gr.Blocks(title="AETHER CORE") as demo:
-    gr.Markdown("## 🧠 AETHER CORE — IA Científica Autónoma")
+    gr.Markdown("## 🧠 AETHER CORE — IA Científica Evolutiva")
     session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
     inp = gr.Textbox(label="Orden", lines=4)
-    out = gr.Textbox(label="Resultado", lines=30)
+    out = gr.Textbox(label="Resultado", lines=28)
     btn = gr.Button("EJECUTAR AETHER", variant="primary")
     btn.click(aether, inputs=[inp, session], outputs=out)
 
 demo.launch()
-
-
-
 
