@@ -3,3 +3,6 @@ numpy
 firebase-admin
 fpdf
 matplotlib
+fastapi
+uvicorn
+pydantic
