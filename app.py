@@ -27,24 +27,24 @@ EXECUTION_MODE = "SIMULATION"
 DEFAULT_SESSION = "default"
 
 # ======================================================
-# DOMAIN MAP (ONTOLOGÍA BASE MULTIDISCIPLINARIA)
+# DOMAIN MAP (ONTOLOGÍA MULTIDISCIPLINARIA)
 # ======================================================
 DOMAIN_MAP = {
     "matematicas": ["ecuacion", "calculo", "modelo", "optimizacion"],
     "fisica": ["fuerza", "energia", "movimiento", "termodinamica"],
-    "quimica": ["reaccion", "molecula", "compuesto", "quimico"],
+    "quimica": ["reaccion", "molecula", "compuesto"],
     "electronica": ["voltaje", "corriente", "sensor", "esp32", "pcb", "relay"],
-    "mecanica": ["estructura", "movimiento", "engranaje", "fuerza"],
-    "mecatronica": ["robot", "control", "actuador", "sensor"],
-    "medicina": ["tratamiento", "diagnostico", "farmaco", "paciente"],
-    "biologia": ["celula", "organismo", "genetica"],
+    "mecanica": ["estructura", "engranaje", "dinamica"],
+    "mecatronica": ["robot", "control", "actuador"],
+    "medicina": ["tratamiento", "diagnostico", "farmaco"],
+    "biologia": ["celula", "genetica", "organismo"],
     "nanotecnologia": ["nanobot", "nano", "molecular"],
     "ambiental": ["contaminacion", "agua", "energia limpia"],
-    "aeroespacial": ["nasa", "orbita", "cohete", "satelite"]
+    "aeroespacial": ["nasa", "orbita", "satelite", "cohete"]
 }
 
 # ======================================================
-# MODE SELECTION (TIPO DE PENSAMIENTO)
+# MODE SELECTION (TIPO DE RAZONAMIENTO)
 # ======================================================
 def select_mode(command):
     t = command.lower()
@@ -61,10 +61,8 @@ def detect_domains(command):
     t = command.lower()
     domains = []
     for domain, keywords in DOMAIN_MAP.items():
-        for k in keywords:
-            if k in t:
-                domains.append(domain)
-                break
+        if any(k in t for k in keywords):
+            domains.append(domain)
     return domains if domains else ["general"]
 
 # ======================================================
@@ -90,30 +88,96 @@ def log_event(data):
     db.collection("aether_memory").add(data)
 
 # ======================================================
-# HARDWARE ENGINE (EJEMPLO BASE)
+# PLAN DE SALIDA (DECISIÓN CLAVE)
 # ======================================================
-def design_interruptor_inteligente():
-    return """
-🔌 DISEÑO: INTERRUPTOR INTELIGENTE (FÍSICO + VOZ)
+def decide_output_artifact(mode, domains):
+    if "nanotecnologia" in domains or "medicina" in domains:
+        return "scientific_design"
+    if "electronica" in domains or "mecatronica" in domains:
+        return "engineering_design"
+    if mode == "scientific":
+        return "mathematical_model"
+    return "technical_plan"
 
-Componentes:
-- ESP32
-- Relé SSR AC
-- Fuente AC-DC
-- Pulsador
-- Micrófono digital
-- Protección eléctrica
+# ======================================================
+# ARTEFACT GENERATORS
+# ======================================================
+def generate_scientific_design(command, domains):
+    return f"""
+📄 ARTEFACTO: DISEÑO CIENTÍFICO TEÓRICO
 
-Arquitectura:
-AC → Fuente → ESP32 → Relé → Carga
+Objetivo:
+{command}
 
-Lógica:
-- Pulsador físico
-- Comando de voz
-- Estado persistente
+Dominios involucrados:
+{", ".join(domains)}
 
-Aplicable a:
-IoT · Domótica · Industria · Educación
+Estructura:
+1️⃣ Fundamentación teórica
+2️⃣ Principios físicos/químicos
+3️⃣ Modelo conceptual
+4️⃣ Supuestos y limitaciones
+5️⃣ Posibles aplicaciones reales
+
+Estado:
+Diseño base listo para simulación o validación experimental.
+"""
+
+def generate_engineering_design(command, domains):
+    return f"""
+⚙️ ARTEFACTO: DISEÑO DE INGENIERÍA
+
+Objetivo:
+{command}
+
+Dominios:
+{", ".join(domains)}
+
+Contenido:
+1️⃣ Arquitectura del sistema
+2️⃣ Componentes principales
+3️⃣ Lógica de control
+4️⃣ Seguridad y restricciones
+5️⃣ Preparación para prototipo
+
+Estado:
+Listo para firmware, PCB o integración física.
+"""
+
+def generate_mathematical_model(command):
+    return f"""
+📐 ARTEFACTO: MODELO MATEMÁTICO
+
+Problema:
+{command}
+
+Incluye:
+1️⃣ Variables del sistema
+2️⃣ Ecuaciones base
+3️⃣ Supuestos
+4️⃣ Método de resolución
+5️⃣ Interpretación física
+
+Estado:
+Modelo preparado para simulación numérica.
+"""
+
+def generate_technical_plan(command):
+    return f"""
+🧠 ARTEFACTO: PLAN TÉCNICO GENERAL
+
+Objetivo:
+{command}
+
+Plan:
+1️⃣ Definición del problema
+2️⃣ Dominio de aplicación
+3️⃣ Estrategia de solución
+4️⃣ Recursos necesarios
+5️⃣ Siguientes pasos técnicos
+
+Estado:
+Plan maestro generado.
 """
 
 # ======================================================
@@ -123,13 +187,15 @@ def aether(command, session=DEFAULT_SESSION):
     cmd_type = classify_command(command)
     mode = select_mode(command)
     domains = detect_domains(command)
+    artifact_type = decide_output_artifact(mode, domains)
 
     log_event({
         "command": command,
         "type": cmd_type,
         "session": session,
         "mode": mode,
-        "domains": domains
+        "domains": domains,
+        "artifact": artifact_type
     })
 
     if cmd_type == "system":
@@ -137,61 +203,52 @@ def aether(command, session=DEFAULT_SESSION):
 🧠 ESTADO DE AETHER
 
 Agente: {AGENT_NAME}
-Modo ejecución: {EXECUTION_MODE}
+Modo: {EXECUTION_MODE}
 Sesión: {session}
 
-Capacidades activas:
+Capacidades:
 - Multidominio
 - Memoria persistente
 - Análisis científico
 - Diseño de ingeniería
-- Arquitectura técnica
-
-Dominios cargados:
-{", ".join(DOMAIN_MAP.keys())}
+- Generación de artefactos
 
 Estado: OPERATIVO
 """
 
-    if cmd_type == "hardware":
-        return design_interruptor_inteligente()
+    if artifact_type == "scientific_design":
+        return generate_scientific_design(command, domains)
 
-    return f"""
-🧠 AETHER ACTIVO
+    if artifact_type == "engineering_design":
+        return generate_engineering_design(command, domains)
 
-Comando:
-{command}
+    if artifact_type == "mathematical_model":
+        return generate_mathematical_model(command)
 
-Tipo: {cmd_type}
-Modo cognitivo: {mode}
-Dominios detectados: {", ".join(domains)}
-
-Resultado:
-Análisis estructurado listo.
-Preparado para generación de modelos, diseños o artefactos técnicos.
-"""
+    return generate_technical_plan(command)
 
 # ======================================================
 # UI
 # ======================================================
 with gr.Blocks(title="AETHER CORE") as demo:
-    gr.Markdown("## 🧠 Aether Core — Sistema Multidisciplinario")
+    gr.Markdown("## 🧠 Aether Core — Sistema Productivo Multidisciplinario")
     gr.Markdown(
-        "Matemáticas · Física · Química · Biomedicina · Robótica · Electrónica · Aeroespacial"
+        "Ciencia · Ingeniería · Medicina · Nanotecnología · Robótica · Aeroespacial"
     )
 
     session = gr.Textbox(label="Sesión", value=DEFAULT_SESSION)
     inp = gr.Textbox(
         label="Orden",
-        placeholder="Ej: Diseñar nanobot médico para administrar fármacos / estado",
+        placeholder="Ej: Diseñar nanobot para administrar fármacos / Analizar fuerzas en un sistema mecánico",
         lines=4
     )
-    out = gr.Textbox(label="Respuesta", lines=26)
+    out = gr.Textbox(label="Salida (Artefacto generado)", lines=30)
 
-    btn = gr.Button("Enviar orden")
+    btn = gr.Button("Ejecutar")
     btn.click(aether, inputs=[inp, session], outputs=out)
 
 demo.launch()
+
 
 
 
