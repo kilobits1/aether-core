@@ -2,7 +2,7 @@
 # AETHER CORE — PRO TOTAL (HF SPACES) — GRADIO ONLY (NO FASTAPI)
 # Objetivo: 0 runtime-crash en HF.
 # Incluye:
-#   - Chat type="messages" (solo dict role/content)
+#   - Chat compatible con gradio clásico (tuplas usuario/asistente)
 #   - Cola + scheduler
 #   - Plugins hot-reload *_ai.py
 #   - Logs + dashboard + demo1 export
@@ -495,9 +495,35 @@ def format_reply(decision, result):
         return f"🔬 Resultado científico:\n\n{payload}"
     return str(result.get("result"))
 
+def normalize_chat_history(history):
+    if not isinstance(history, list):
+        return []
+    normalized = []
+    pending_user = None
+    for item in history:
+        if isinstance(item, (tuple, list)) and len(item) == 2:
+            user_msg, bot_msg = item
+            normalized.append((str(user_msg), str(bot_msg)))
+            pending_user = None
+            continue
+        if isinstance(item, dict):
+            role = item.get("role")
+            content = item.get("content")
+            if role == "user":
+                pending_user = "" if content is None else str(content)
+            elif role == "assistant":
+                if pending_user is None:
+                    normalized.append(("", "" if content is None else str(content)))
+                else:
+                    normalized.append((pending_user, "" if content is None else str(content)))
+                    pending_user = None
+    if pending_user is not None:
+        normalized.append((pending_user, ""))
+    return normalized
+
 def chat_send(message, history):
     message = (message or "").strip()
-    history = history if isinstance(history, list) else []
+    history = normalize_chat_history(history)
     if not message:
         return history, ""
     decision, result = run_now(message)
