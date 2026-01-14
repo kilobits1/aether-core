@@ -495,41 +495,15 @@ def format_reply(decision, result):
         return f"🔬 Resultado científico:\n\n{payload}"
     return str(result.get("result"))
 
-def normalize_chat_history(history):
-    if not isinstance(history, list):
-        return []
-    normalized = []
-    pending_user = None
-    for item in history:
-        if isinstance(item, (tuple, list)) and len(item) == 2:
-            user_msg, bot_msg = item
-            normalized.append((str(user_msg), str(bot_msg)))
-            pending_user = None
-            continue
-        if isinstance(item, dict):
-            role = item.get("role")
-            content = item.get("content")
-            if role == "user":
-                pending_user = "" if content is None else str(content)
-            elif role == "assistant":
-                if pending_user is None:
-                    normalized.append(("", "" if content is None else str(content)))
-                else:
-                    normalized.append((pending_user, "" if content is None else str(content)))
-                    pending_user = None
-    if pending_user is not None:
-        normalized.append((pending_user, ""))
-    return normalized
-
 def chat_send(message, history):
     message = (message or "").strip()
-    history = normalize_chat_history(history)
+    history = history if isinstance(history, list) else []
     if not message:
-        return history, ""
+        return history, "", history
     decision, result = run_now(message)
     reply = format_reply(decision, result)
     history.append((message, reply))
-    return history, ""
+    return history, "", history
 
 # -----------------------------
 # UI HELPERS
@@ -589,6 +563,7 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
     chat = gr.Chatbot(label="AETHER Chat", height=420)
+    chat_state = gr.State([])
     user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins", lines=2)
 
     with gr.Row():
@@ -610,7 +585,7 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     export_out = gr.Code(label="Export demo1", language="json")
 
-    btn_send.click(fn=chat_send, inputs=[user_msg, chat], outputs=[chat, user_msg])
+    btn_send.click(fn=chat_send, inputs=[user_msg, chat_state], outputs=[chat, user_msg, chat_state])
     btn_enqueue.click(fn=ui_enqueue, inputs=[task_cmd, prio], outputs=[status])
     btn_reload.click(fn=ui_reload_modules, inputs=[], outputs=[status])
     btn_export_demo.click(fn=export_demo1, inputs=[], outputs=[export_out])
