@@ -495,27 +495,14 @@ def format_reply(decision, result):
         return f"🔬 Resultado científico:\n\n{payload}"
     return str(result.get("result"))
 
-def normalize_to_messages(history):
-    if not history or not isinstance(history, list):
-        return []
-    out = []
-    for h in history:
-        if isinstance(h, dict) and "role" in h and "content" in h:
-            out.append({"role": str(h["role"]), "content": str(h["content"])})
-        elif isinstance(h, (tuple, list)) and len(h) == 2:
-            out.append({"role": "user", "content": str(h[0])})
-            out.append({"role": "assistant", "content": str(h[1])})
-    return out
-
 def chat_send(message, history):
     message = (message or "").strip()
-    history = normalize_to_messages(history)
+    history = history if isinstance(history, list) else []
     if not message:
         return history, ""
     decision, result = run_now(message)
     reply = format_reply(decision, result)
-    history.append({"role": "user", "content": message})
-    history.append({"role": "assistant", "content": reply})
+    history.append((message, reply))
     return history, ""
 
 # -----------------------------
@@ -575,7 +562,7 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420, type="messages")
+    chat = gr.Chatbot(label="AETHER Chat", height=420)
     user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins", lines=2)
 
     with gr.Row():
