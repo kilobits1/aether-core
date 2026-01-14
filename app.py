@@ -9,7 +9,6 @@
 # ======================================================
 
 import os
-import time
 import json
 import uuid
 import threading
@@ -373,9 +372,8 @@ def life_cycle():
     log_event("CYCLE", {"energy": AETHER_STATE.get("energy", 0), "focus": AETHER_STATE.get("focus")})
 
 # -----------------------------
-# WORKER + SCHEDULER
+# WORKER + SCHEDULER (tick-driven)
 # -----------------------------
-STOP_EVENT = threading.Event()
 SCHEDULER_INTERVAL = 15
 
 def process_task(task):
@@ -409,35 +407,31 @@ def process_task(task):
     log_event("TASK_DONE", {"command": command, "success": success})
     update_dashboard()
 
-def task_worker():
-    while not STOP_EVENT.is_set():
-        try:
-            if not TASK_QUEUE.empty():
-                _, task = TASK_QUEUE.get()
-                with state_lock:
-                    AETHER_STATE["status"] = "WORKING"
-                    save_json_atomic(STATE_FILE, AETHER_STATE)
-                process_task(task)
-                TASK_QUEUE.task_done()
-            else:
-                with state_lock:
-                    AETHER_STATE["status"] = "IDLE"
-                    save_json_atomic(STATE_FILE, AETHER_STATE)
-            update_dashboard()
-            time.sleep(0.5)
-        except Exception as e:
-            log_event("WORKER_ERROR", {"error": str(e)})
-            time.sleep(1)
+def process_queue_once():
+    try:
+        if not TASK_QUEUE.empty():
+            _, task = TASK_QUEUE.get()
+            with state_lock:
+                AETHER_STATE["status"] = "WORKING"
+                save_json_atomic(STATE_FILE, AETHER_STATE)
+            process_task(task)
+            TASK_QUEUE.task_done()
+        else:
+            with state_lock:
+                AETHER_STATE["status"] = "IDLE"
+                save_json_atomic(STATE_FILE, AETHER_STATE)
+        update_dashboard()
+    except Exception as e:
+        log_event("WORKER_ERROR", {"error": str(e)})
+    return ui_status()
 
-def scheduler_loop():
-    while not STOP_EVENT.is_set():
-        try:
-            life_cycle()
-            enqueue_task("revisar estado interno", priority=10, source="internal")
-            time.sleep(SCHEDULER_INTERVAL)
-        except Exception as e:
-            log_event("SCHEDULER_ERROR", {"error": str(e)})
-            time.sleep(2)
+def scheduler_tick():
+    try:
+        life_cycle()
+        enqueue_task("revisar estado interno", priority=10, source="internal")
+    except Exception as e:
+        log_event("SCHEDULER_ERROR", {"error": str(e)})
+    return ui_status()
 
 # -----------------------------
 # ARRANQUE SEGURO (solo una vez)
@@ -452,9 +446,6 @@ def start_aether():
 
     ensure_demo1()
     reload_ai_modules()
-
-    threading.Thread(target=task_worker, daemon=True).start()
-    threading.Thread(target=scheduler_loop, daemon=True).start()
 
     log_event("BOOT", {"version": AETHER_VERSION, "data_dir": DATA_DIR})
     update_dashboard()
@@ -617,6 +608,8 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     demo.load(fn=start_aether, inputs=[], outputs=[boot_msg])
     demo.load(fn=ui_status, inputs=[], outputs=[status])
     demo.load(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
+    demo.load(fn=process_queue_once, inputs=[], outputs=[status], every=2)
+    demo.load(fn=scheduler_tick, inputs=[], outputs=[status], every=SCHEDULER_INTERVAL)
 
 # -----------------------------
 # HF ENTRYPOINT
