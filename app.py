@@ -9,7 +9,6 @@
 # ======================================================
 
 import os
-import time
 import json
 import uuid
 import threading
@@ -373,9 +372,8 @@ def life_cycle():
     log_event("CYCLE", {"energy": AETHER_STATE.get("energy", 0), "focus": AETHER_STATE.get("focus")})
 
 # -----------------------------
-# WORKER + SCHEDULER
+# WORKER + SCHEDULER (tick-driven)
 # -----------------------------
-STOP_EVENT = threading.Event()
 SCHEDULER_INTERVAL = 15
 
 def process_task(task):
@@ -409,35 +407,31 @@ def process_task(task):
     log_event("TASK_DONE", {"command": command, "success": success})
     update_dashboard()
 
-def task_worker():
-    while not STOP_EVENT.is_set():
-        try:
-            if not TASK_QUEUE.empty():
-                _, task = TASK_QUEUE.get()
-                with state_lock:
-                    AETHER_STATE["status"] = "WORKING"
-                    save_json_atomic(STATE_FILE, AETHER_STATE)
-                process_task(task)
-                TASK_QUEUE.task_done()
-            else:
-                with state_lock:
-                    AETHER_STATE["status"] = "IDLE"
-                    save_json_atomic(STATE_FILE, AETHER_STATE)
-            update_dashboard()
-            time.sleep(0.5)
-        except Exception as e:
-            log_event("WORKER_ERROR", {"error": str(e)})
-            time.sleep(1)
+def process_queue_once():
+    try:
+        if not TASK_QUEUE.empty():
+            _, task = TASK_QUEUE.get()
+            with state_lock:
+                AETHER_STATE["status"] = "WORKING"
+                save_json_atomic(STATE_FILE, AETHER_STATE)
+            process_task(task)
+            TASK_QUEUE.task_done()
+        else:
+            with state_lock:
+                AETHER_STATE["status"] = "IDLE"
+                save_json_atomic(STATE_FILE, AETHER_STATE)
+        update_dashboard()
+    except Exception as e:
+        log_event("WORKER_ERROR", {"error": str(e)})
+    return ui_status()
 
-def scheduler_loop():
-    while not STOP_EVENT.is_set():
-        try:
-            life_cycle()
-            enqueue_task("revisar estado interno", priority=10, source="internal")
-            time.sleep(SCHEDULER_INTERVAL)
-        except Exception as e:
-            log_event("SCHEDULER_ERROR", {"error": str(e)})
-            time.sleep(2)
+def scheduler_tick():
+    try:
+        life_cycle()
+        enqueue_task("revisar estado interno", priority=10, source="internal")
+    except Exception as e:
+        log_event("SCHEDULER_ERROR", {"error": str(e)})
+    return ui_status()
 
 # -----------------------------
 # ARRANQUE SEGURO (solo una vez)
@@ -452,9 +446,6 @@ def start_aether():
 
     ensure_demo1()
     reload_ai_modules()
-
-    threading.Thread(target=task_worker, daemon=True).start()
-    threading.Thread(target=scheduler_loop, daemon=True).start()
 
     log_event("BOOT", {"version": AETHER_VERSION, "data_dir": DATA_DIR})
     update_dashboard()
@@ -504,27 +495,14 @@ def format_reply(decision, result):
         return f"🔬 Resultado científico:\n\n{payload}"
     return str(result.get("result"))
 
-def normalize_to_messages(history):
-    if not history or not isinstance(history, list):
-        return []
-    out = []
-    for h in history:
-        if isinstance(h, dict) and "role" in h and "content" in h:
-            out.append({"role": str(h["role"]), "content": str(h["content"])})
-        elif isinstance(h, (tuple, list)) and len(h) == 2:
-            out.append({"role": "user", "content": str(h[0])})
-            out.append({"role": "assistant", "content": str(h[1])})
-    return out
-
 def chat_send(message, history):
     message = (message or "").strip()
-    history = normalize_to_messages(history)
+    history = history if isinstance(history, list) else []
     if not message:
         return history, ""
     decision, result = run_now(message)
     reply = format_reply(decision, result)
-    history.append({"role": "user", "content": message})
-    history.append({"role": "assistant", "content": reply})
+    history.append((message, reply))
     return history, ""
 
 # -----------------------------
@@ -584,7 +562,7 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420, type="messages")
+    chat = gr.Chatbot(label="AETHER Chat", height=420)
     user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins", lines=2)
 
     with gr.Row():
@@ -617,6 +595,8 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
     demo.load(fn=start_aether, inputs=[], outputs=[boot_msg])
     demo.load(fn=ui_status, inputs=[], outputs=[status])
     demo.load(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
+    demo.load(fn=process_queue_once, inputs=[], outputs=[status], every=2)
+    demo.load(fn=scheduler_tick, inputs=[], outputs=[status], every=SCHEDULER_INTERVAL)
 
 # -----------------------------
 # HF ENTRYPOINT
