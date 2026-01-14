@@ -495,9 +495,18 @@ def format_reply(decision, result):
         return f"🔬 Resultado científico:\n\n{payload}"
     return str(result.get("result"))
 
+def _coerce_tuple_history(history):
+    if not isinstance(history, list):
+        return []
+    normalized = []
+    for item in history:
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            normalized.append((str(item[0]), str(item[1])))
+    return normalized
+
 def chat_send(message, history):
     message = (message or "").strip()
-    history = history if isinstance(history, list) else []
+    history = _coerce_tuple_history(history)
     if not message:
         return history, history, ""
     decision, result = run_now(message)
@@ -562,7 +571,7 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
+    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[], type="tuple")
     chat_state = gr.State([])
     user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins", lines=2)
 
