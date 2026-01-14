@@ -54,6 +54,13 @@ MAX_STRATEGY_HISTORY = 1000
 MAX_DEDUP_KEYS = 5000
 
 # -----------------------------
+# HEARTBEAT CONFIG
+# -----------------------------
+HEARTBEAT_CMD = "revisar estado interno"
+HEARTBEAT_INTERVAL_SEC = int(os.environ.get("AETHER_HEARTBEAT_SEC", "120"))
+HEARTBEAT_MIN_ENERGY = int(os.environ.get("AETHER_HEARTBEAT_MIN_ENERGY", "40"))
+
+# -----------------------------
 # ESTADO GLOBAL
 # -----------------------------
 DEFAULT_STATE = {
@@ -64,6 +71,7 @@ DEFAULT_STATE = {
     "focus": "STANDBY",
     "created_at": safe_now(),
     "last_cycle": None,
+    "last_heartbeat_ts": None,
 }
 
 ROOT_GOAL = "EXECUTE_USER_COMMANDS_ONLY"
@@ -78,6 +86,7 @@ state_lock = threading.Lock()
 strategic_lock = threading.Lock()
 modules_lock = threading.Lock()
 dedup_lock = threading.Lock()
+queue_lock = threading.Lock()
 
 # -----------------------------
 # JSON IO (robusto + atómico)
@@ -111,6 +120,10 @@ STRATEGIC_MEMORY = load_json(
 )
 AETHER_LOGS = load_json(LOG_FILE, [])
 LOADED_MODULES = {}
+
+if "last_heartbeat_ts" not in AETHER_STATE:
+    AETHER_STATE["last_heartbeat_ts"] = None
+    save_json_atomic(STATE_FILE, AETHER_STATE)
 
 # -----------------------------
 # DEMO SNAPSHOT (auto-creación)
@@ -169,6 +182,14 @@ TASK_QUEUE = PriorityQueue()
 
 TASK_DEDUP = []
 TASK_DEDUP_SET = set()
+QUEUE_SET = set()
+
+def tasks_queue_contains(command: str) -> bool:
+    command = (command or "").strip()
+    if not command:
+        return False
+    with queue_lock:
+        return command in QUEUE_SET
 
 def _dedup_prune_if_needed():
     with dedup_lock:
@@ -201,6 +222,8 @@ def enqueue_task(command, priority=5, source="external"):
         _dedup_prune_if_needed()
 
     dyn = compute_priority(priority)
+    with queue_lock:
+        QUEUE_SET.add(command)
     TASK_QUEUE.put(
         (
             dyn,
@@ -414,8 +437,12 @@ def process_queue_once():
             with state_lock:
                 AETHER_STATE["status"] = "WORKING"
                 save_json_atomic(STATE_FILE, AETHER_STATE)
-            process_task(task)
-            TASK_QUEUE.task_done()
+            try:
+                process_task(task)
+            finally:
+                with queue_lock:
+                    QUEUE_SET.discard(task.get("command"))
+                TASK_QUEUE.task_done()
         else:
             with state_lock:
                 AETHER_STATE["status"] = "IDLE"
@@ -428,7 +455,20 @@ def process_queue_once():
 def scheduler_tick():
     try:
         life_cycle()
-        enqueue_task("revisar estado interno", priority=10, source="internal")
+        now_ts = datetime.now(timezone.utc).timestamp()
+        with state_lock:
+            last_ts = AETHER_STATE.get("last_heartbeat_ts")
+            energy = int(AETHER_STATE.get("energy", 0))
+        interval_ok = last_ts is None or (now_ts - float(last_ts)) >= HEARTBEAT_INTERVAL_SEC
+        if (
+            interval_ok
+            and energy >= HEARTBEAT_MIN_ENERGY
+            and not tasks_queue_contains(HEARTBEAT_CMD)
+        ):
+            if enqueue_task(HEARTBEAT_CMD, priority=10, source="internal"):
+                with state_lock:
+                    AETHER_STATE["last_heartbeat_ts"] = now_ts
+                    save_json_atomic(STATE_FILE, AETHER_STATE)
     except Exception as e:
         log_event("SCHEDULER_ERROR", {"error": str(e)})
     return ui_status()
