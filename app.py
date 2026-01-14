@@ -499,11 +499,11 @@ def chat_send(message, history):
     message = (message or "").strip()
     history = history if isinstance(history, list) else []
     if not message:
-        return history, "", history
+        return history, history, ""
     decision, result = run_now(message)
     reply = format_reply(decision, result)
     history.append((message, reply))
-    return history, "", history
+    return history, history, ""
 
 # -----------------------------
 # UI HELPERS
@@ -562,7 +562,7 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420)
+    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
     chat_state = gr.State([])
     user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins", lines=2)
 
@@ -585,7 +585,7 @@ with gr.Blocks(title="AETHER CORE — PRO TOTAL") as demo:
 
     export_out = gr.Code(label="Export demo1", language="json")
 
-    btn_send.click(fn=chat_send, inputs=[user_msg, chat_state], outputs=[chat, user_msg, chat_state])
+    btn_send.click(fn=chat_send, inputs=[user_msg, chat_state], outputs=[chat, chat_state, user_msg])
     btn_enqueue.click(fn=ui_enqueue, inputs=[task_cmd, prio], outputs=[status])
     btn_reload.click(fn=ui_reload_modules, inputs=[], outputs=[status])
     btn_export_demo.click(fn=export_demo1, inputs=[], outputs=[export_out])
