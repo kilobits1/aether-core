@@ -1,4 +1,5 @@
 # plugins/restore_ai.py
+import json
 import os
 import shutil
 
@@ -45,6 +46,19 @@ def run(command: str):
         if os.path.isfile(src):
             shutil.copy2(src, dst)
             restored.append(fn)
+    state_path = os.path.join(data_dir, "aether_state.json")
+    if os.path.exists(state_path):
+        try:
+            with open(state_path, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            if int(state.get("energy", 0)) <= 0:
+                state["energy"] = 80
+                state["focus"] = "ACTIVE"
+                state["status"] = "IDLE"
+                with open(state_path, "w", encoding="utf-8") as f:
+                    json.dump(state, f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
 
     return {
         "ok": True,
@@ -53,4 +67,3 @@ def run(command: str):
         "restored": restored,
         "note": "Reinicia el Space para aplicar completamente."
     }
-
