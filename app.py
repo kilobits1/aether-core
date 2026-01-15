@@ -35,7 +35,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # -----------------------------
 # VERSIONADO Y ARCHIVOS
 # -----------------------------
-AETHER_VERSION = "3.5.1-recovery-clamp"
+AETHER_VERSION = "3.5.2-heartbeat-switch"
 
 STATE_FILE = os.path.join(DATA_DIR, "aether_state.json")
 MEMORY_FILE = os.path.join(DATA_DIR, "aether_memory.json")
@@ -59,6 +59,7 @@ MAX_DEDUP_KEYS = 5000
 HEARTBEAT_CMD = "revisar estado interno"
 HEARTBEAT_INTERVAL_SEC = int(os.environ.get("AETHER_HEARTBEAT_SEC", "120"))
 HEARTBEAT_MIN_ENERGY = int(os.environ.get("AETHER_HEARTBEAT_MIN_ENERGY", "40"))
+HEARTBEAT_ENABLED = os.environ.get("AETHER_HEARTBEAT_ENABLED", "0") == "1"
 
 # -----------------------------
 # ESTADO GLOBAL
@@ -454,21 +455,22 @@ def process_queue_once():
 
 def scheduler_tick():
     try:
-        life_cycle()
-        now_ts = datetime.now(timezone.utc).timestamp()
-        with state_lock:
-            last_ts = AETHER_STATE.get("last_heartbeat_ts")
-            energy = int(AETHER_STATE.get("energy", 0))
-        interval_ok = last_ts is None or (now_ts - float(last_ts)) >= HEARTBEAT_INTERVAL_SEC
-        if (
-            interval_ok
-            and energy >= HEARTBEAT_MIN_ENERGY
-            and not tasks_queue_contains(HEARTBEAT_CMD)
-        ):
-            if enqueue_task(HEARTBEAT_CMD, priority=10, source="internal"):
-                with state_lock:
-                    AETHER_STATE["last_heartbeat_ts"] = now_ts
-                    save_json_atomic(STATE_FILE, AETHER_STATE)
+        if HEARTBEAT_ENABLED:
+            life_cycle()
+            now_ts = datetime.now(timezone.utc).timestamp()
+            with state_lock:
+                last_ts = AETHER_STATE.get("last_heartbeat_ts")
+                energy = int(AETHER_STATE.get("energy", 0))
+            interval_ok = last_ts is None or (now_ts - float(last_ts)) >= HEARTBEAT_INTERVAL_SEC
+            if (
+                interval_ok
+                and energy >= HEARTBEAT_MIN_ENERGY
+                and not tasks_queue_contains(HEARTBEAT_CMD)
+            ):
+                if enqueue_task(HEARTBEAT_CMD, priority=10, source="internal"):
+                    with state_lock:
+                        AETHER_STATE["last_heartbeat_ts"] = now_ts
+                        save_json_atomic(STATE_FILE, AETHER_STATE)
     except Exception as e:
         log_event("SCHEDULER_ERROR", {"error": str(e)})
     return ui_status()
