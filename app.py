@@ -59,7 +59,7 @@ MAX_DEDUP_KEYS = 5000
 HEARTBEAT_CMD = "revisar estado interno"
 HEARTBEAT_INTERVAL_SEC = int(os.environ.get("AETHER_HEARTBEAT_SEC", "120"))
 HEARTBEAT_MIN_ENERGY = int(os.environ.get("AETHER_HEARTBEAT_MIN_ENERGY", "40"))
-HEARTBEAT_ENABLED = os.environ.get("AETHER_HEARTBEAT_ENABLED", "0") == "1"
+HEARTBEAT_ENABLED = os.environ.get("AETHER_HEARTBEAT_ENABLED", "0").strip() == "1"
 
 # -----------------------------
 # ESTADO GLOBAL
