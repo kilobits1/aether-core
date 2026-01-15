@@ -232,7 +232,7 @@ def enqueue_task(command, priority=5, source="external"):
     ):
         log_event(
             "HEARTBEAT_DISABLED",
-            {"message": "Heartbeat DISABLED: blocked enqueue of 'revisar estado interno'"},
+            {"message": "Heartbeat DISABLED: blocked enqueue"},
         )
         return {"ok": False, "blocked": True, "reason": "heartbeat_disabled"}
 
@@ -514,10 +514,12 @@ def start_aether():
 
     ensure_demo1()
     reload_ai_modules()
-    if not AETHER_HEARTBEAT_ENABLED:
+    if AETHER_HEARTBEAT_ENABLED:
+        enqueue_task(HEARTBEAT_CMD, priority=10, source="internal")
+    else:
         log_event(
             "HEARTBEAT_DISABLED",
-            {"message": "Heartbeat DISABLED via env: skipping boot enqueue"},
+            {"message": "Heartbeat DISABLED: skip boot enqueue"},
         )
     with state_lock:
         if int(AETHER_STATE.get("energy", 0)) <= 0:
