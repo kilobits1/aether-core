@@ -19,7 +19,7 @@ MEMORY_FILE = os.path.join(DATA_DIR, "aether_memory.json")
 STRATEGIC_FILE = os.path.join(DATA_DIR, "aether_strategic.json")
 
 AETHER_ID = "AETHER"
-AETHER_VERSION = "3.5.1-recovery-clamp"
+AETHER_VERSION = "3.5.2-heartbeat-switch"
 
 # -----------------------------
 # Helpers
