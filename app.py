@@ -49,7 +49,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # -----------------------------
 # VERSIONADO Y ARCHIVOS
 # -----------------------------
-AETHER_VERSION = "3.5.2-heartbeat-switch"
+AETHER_VERSION = "3.5.3-dashboard-atomic"
 
 STATE_FILE = os.path.join(DATA_DIR, "aether_state.json")
 MEMORY_FILE = os.path.join(DATA_DIR, "aether_memory.json")
@@ -120,9 +120,29 @@ def load_json(path, default):
 
 def save_json_atomic(path, data):
     tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(tmp, path)
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        os.replace(tmp, path)
+        return True
+    except Exception as e:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
+        if "log_event" in globals() and path != LOG_FILE:
+            try:
+                log_event("JSON_WRITE_ERROR", {"file": path, "error": str(e)})
+            except Exception:
+                pass
+        return False
 
 # -----------------------------
 # CARGA INICIAL
@@ -188,7 +208,8 @@ def update_dashboard():
         "data_dir": DATA_DIR,
         "modules_loaded": len(LOADED_MODULES),
     }
-    save_json_atomic(DASHBOARD_FILE, dash)
+    if not save_json_atomic(DASHBOARD_FILE, dash):
+        log_event("DASHBOARD_WRITE_FAIL", {"file": DASHBOARD_FILE})
 
 # -----------------------------
 # COLA DE TAREAS
