@@ -35,7 +35,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # -----------------------------
 # VERSIONADO Y ARCHIVOS
 # -----------------------------
-AETHER_VERSION = "3.4.9-pro-total-hf-gradio-only-stable"
+AETHER_VERSION = "3.5.1-recovery-clamp"
 
 STATE_FILE = os.path.join(DATA_DIR, "aether_state.json")
 MEMORY_FILE = os.path.join(DATA_DIR, "aether_memory.json")
@@ -486,6 +486,12 @@ def start_aether():
 
     ensure_demo1()
     reload_ai_modules()
+    with state_lock:
+        if int(AETHER_STATE.get("energy", 0)) <= 0:
+            AETHER_STATE["energy"] = 80
+            AETHER_STATE["focus"] = "ACTIVE"
+            AETHER_STATE["status"] = "IDLE"
+            save_json_atomic(STATE_FILE, AETHER_STATE)
 
     log_event("BOOT", {"version": AETHER_VERSION, "data_dir": DATA_DIR})
     update_dashboard()
