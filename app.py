@@ -27,6 +27,20 @@ def safe_now():
     return datetime.now(timezone.utc).isoformat()
 
 # -----------------------------
+# ENV HELPERS
+# -----------------------------
+def env_bool(name, default=False):
+    raw = os.environ.get(name)
+    if raw is None:
+        return bool(default)
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "yes", "y", "on", "t"}:
+        return True
+    if value in {"0", "false", "no", "n", "off", "f"}:
+        return False
+    return bool(default)
+
+# -----------------------------
 # DIRECTORIO DE DATOS (HF-safe)
 # -----------------------------
 DATA_DIR = os.environ.get("AETHER_DATA_DIR", "/tmp/aether")
@@ -59,7 +73,7 @@ MAX_DEDUP_KEYS = 5000
 HEARTBEAT_CMD = "revisar estado interno"
 HEARTBEAT_INTERVAL_SEC = int(os.environ.get("AETHER_HEARTBEAT_SEC", "120"))
 HEARTBEAT_MIN_ENERGY = int(os.environ.get("AETHER_HEARTBEAT_MIN_ENERGY", "40"))
-HEARTBEAT_ENABLED = os.environ.get("AETHER_HEARTBEAT_ENABLED", "0").strip() == "1"
+AETHER_HEARTBEAT_ENABLED = env_bool("AETHER_HEARTBEAT_ENABLED", True)
 
 # -----------------------------
 # ESTADO GLOBAL
@@ -210,14 +224,24 @@ def compute_priority(base):
 def enqueue_task(command, priority=5, source="external"):
     command = (command or "").strip()
     if not command:
-        return False
+        return {"ok": False, "error": "empty_command"}
+
+    if (
+        not AETHER_HEARTBEAT_ENABLED
+        and command.lower().strip() == HEARTBEAT_CMD
+    ):
+        log_event(
+            "HEARTBEAT_DISABLED",
+            {"message": "Heartbeat DISABLED: blocked enqueue of 'revisar estado interno'"},
+        )
+        return {"ok": False, "blocked": True, "reason": "heartbeat_disabled"}
 
     # DEDUP solo para external
     if source != "internal":
         key = f"{command}:{source}"
         with dedup_lock:
             if key in TASK_DEDUP_SET:
-                return False
+                return {"ok": False, "dedup": True}
             TASK_DEDUP_SET.add(key)
             TASK_DEDUP.append(key)
         _dedup_prune_if_needed()
@@ -233,7 +257,7 @@ def enqueue_task(command, priority=5, source="external"):
     )
     log_event("ENQUEUE", {"command": command, "priority": dyn, "source": source})
     update_dashboard()
-    return True
+    return {"ok": True}
 
 # -----------------------------
 # DOMINIOS + DECISIÓN
@@ -455,22 +479,24 @@ def process_queue_once():
 
 def scheduler_tick():
     try:
-        if HEARTBEAT_ENABLED:
-            life_cycle()
-            now_ts = datetime.now(timezone.utc).timestamp()
-            with state_lock:
-                last_ts = AETHER_STATE.get("last_heartbeat_ts")
-                energy = int(AETHER_STATE.get("energy", 0))
-            interval_ok = last_ts is None or (now_ts - float(last_ts)) >= HEARTBEAT_INTERVAL_SEC
-            if (
-                interval_ok
-                and energy >= HEARTBEAT_MIN_ENERGY
-                and not tasks_queue_contains(HEARTBEAT_CMD)
-            ):
-                if enqueue_task(HEARTBEAT_CMD, priority=10, source="internal"):
-                    with state_lock:
-                        AETHER_STATE["last_heartbeat_ts"] = now_ts
-                        save_json_atomic(STATE_FILE, AETHER_STATE)
+        if not AETHER_HEARTBEAT_ENABLED:
+            return ui_status()
+        life_cycle()
+        now_ts = datetime.now(timezone.utc).timestamp()
+        with state_lock:
+            last_ts = AETHER_STATE.get("last_heartbeat_ts")
+            energy = int(AETHER_STATE.get("energy", 0))
+        interval_ok = last_ts is None or (now_ts - float(last_ts)) >= HEARTBEAT_INTERVAL_SEC
+        if (
+            interval_ok
+            and energy >= HEARTBEAT_MIN_ENERGY
+            and not tasks_queue_contains(HEARTBEAT_CMD)
+        ):
+            enqueue_result = enqueue_task(HEARTBEAT_CMD, priority=10, source="internal")
+            if enqueue_result.get("ok"):
+                with state_lock:
+                    AETHER_STATE["last_heartbeat_ts"] = now_ts
+                    save_json_atomic(STATE_FILE, AETHER_STATE)
     except Exception as e:
         log_event("SCHEDULER_ERROR", {"error": str(e)})
     return ui_status()
@@ -488,6 +514,11 @@ def start_aether():
 
     ensure_demo1()
     reload_ai_modules()
+    if not AETHER_HEARTBEAT_ENABLED:
+        log_event(
+            "HEARTBEAT_DISABLED",
+            {"message": "Heartbeat DISABLED via env: skipping boot enqueue"},
+        )
     with state_lock:
         if int(AETHER_STATE.get("energy", 0)) <= 0:
             AETHER_STATE["energy"] = 80
@@ -594,8 +625,8 @@ def ui_status():
     )
 
 def ui_enqueue(cmd, prio):
-    ok = enqueue_task(cmd, prio, source="external")
-    return f"ENQUEUED={ok}\n\n" + ui_status()
+    result = enqueue_task(cmd, prio, source="external")
+    return f"ENQUEUED={result.get('ok')}\n\n" + ui_status()
 
 def ui_reload_modules():
     mods = reload_ai_modules()
