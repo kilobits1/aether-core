@@ -1674,8 +1674,6 @@ with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
     if hasattr(gr, "Timer"):
         ticker = gr.Timer(5)
         ticker.tick(fn=ui_tick, inputs=[logs_n], outputs=[status, logs])
-    else:
-        demo.load(fn=ui_tick, inputs=[logs_n], outputs=[status, logs], every=5)
 
 # -----------------------------
 # HF ENTRYPOINT
