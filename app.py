@@ -399,7 +399,8 @@ def enqueue_task(command: str, priority: int = 5, source: str = "external") -> D
         log_event("SAFE_MODE_BLOCK_ENQUEUE", {"command": command, "source": source})
         return {"ok": False, "blocked": True, "reason": "SAFE_MODE_ON"}
 
-    if is_frozen():
+    blocked_sources_in_freeze = {"external", "chat"}
+    if is_frozen() and source in blocked_sources_in_freeze:
         log_event("FREEZE_BLOCK_ENQUEUE", {"command": command, "source": source})
         return {"ok": False, "blocked": True, "reason": "SYSTEM_FROZEN"}
 
