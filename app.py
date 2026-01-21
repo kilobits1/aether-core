@@ -394,7 +394,8 @@ def enqueue_task(command: str, priority: int = 5, source: str = "external") -> D
     if not command:
         return {"ok": False, "error": "empty_command"}
 
-    if safe_mode_enabled() and source == "external":
+    blocked_sources_in_safe = {"external", "chat"}
+    if safe_mode_enabled() and source in blocked_sources_in_safe:
         log_event("SAFE_MODE_BLOCK_ENQUEUE", {"command": command, "source": source})
         return {"ok": False, "blocked": True, "reason": "SAFE_MODE_ON"}
 
@@ -1379,11 +1380,10 @@ def ui_status() -> str:
         ensure_ascii=False,
     )
 
-def ui_enqueue(cmd: str, prio: int) -> str:
-    if safe_mode_enabled():
-        return "SAFE_MODE: ejecución externa bloqueada.\n\n" + ui_status()
-    r = enqueue_task(cmd, int(prio), source="external")
-    return f"ENQUEUED={bool(r.get('ok'))}\n\n{ui_status()}"
+def ui_enqueue(cmd: str, prio: int) -> Tuple[str, str]:
+    r = enqueue_task(cmd, int(prio), source="ui")
+    status_text = f"ENQUEUE_RESULT={json.dumps(r, ensure_ascii=False)}\n\n{ui_status()}"
+    return status_text, ui_tail_logs()
 
 def ui_reload_modules() -> str:
     mods = reload_ai_modules()
@@ -1584,7 +1584,7 @@ with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
+    chat = gr.Chatbot(label="AETHER Chat", height=420, type="tuples", value=[])
     chat_state = gr.State([])
     user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins / plan: construir X", lines=2)
 
@@ -1643,7 +1643,7 @@ with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
 
     # wiring
     btn_send.click(fn=chat_send, inputs=[user_msg, chat_state], outputs=[chat, chat_state, user_msg])
-    btn_enqueue.click(fn=ui_enqueue, inputs=[task_cmd, prio], outputs=[status])
+    btn_enqueue.click(fn=ui_enqueue, inputs=[task_cmd, prio], outputs=[status, logs])
     btn_reload.click(fn=ui_reload_modules, inputs=[], outputs=[status])
     btn_export_demo.click(fn=export_demo1, inputs=[], outputs=[export_out])
     btn_refresh_status.click(fn=ui_status, inputs=[], outputs=[status])
