@@ -1069,11 +1069,6 @@ def obedient_execution(command: str, decision: Dict[str, Any]) -> Dict[str, Any]
 def run_now(command: str, source: str = "chat") -> Tuple[Dict[str, Any], Dict[str, Any]]:
     command = (command or "").strip()
 
-    if safe_mode_enabled():
-        log_event("SAFE_MODE_BLOCK_RUN", {"command": command, "source": source})
-        update_dashboard()
-        return {"mode": "safe_mode"}, {"success": False, "error": "SAFE_MODE_ON"}
-
     if _is_plan_command(command):
         subtasks = generate_plan(command)
         decision = {"mode": "planner", "confidence": 1.0}
@@ -1107,6 +1102,12 @@ def run_now(command: str, source: str = "chat") -> Tuple[Dict[str, Any], Dict[st
 
     domains = detect_domains(command)
     decision = decide_engine(command, domains)
+
+    if safe_mode_enabled() and decision.get("mode") != "ai_module":
+        log_event("SAFE_MODE_BLOCK_RUN", {"command": command, "source": source, "mode": decision.get("mode")})
+        update_dashboard()
+        return {"mode": "safe_mode"}, {"success": False, "error": "SAFE_MODE_ON"}
+
     result = obedient_execution(command, decision)
     success = bool(result.get("success"))
 
@@ -1470,13 +1471,17 @@ def ui_run_task(task_id):
 # CHAT HELPERS (tuple history)
 # -----------------------------
 
-def _coerce_tuple_history(history: Any) -> List[Tuple[str, str]]:
+def _coerce_message_history(history: Any) -> List[Dict[str, str]]:
     if not isinstance(history, list):
         return []
-    out: List[Tuple[str, str]] = []
+    out: List[Dict[str, str]] = []
     for item in history:
-        if isinstance(item, (tuple, list)) and len(item) == 2:
-            out.append((str(item[0]), str(item[1])))
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role in {"user", "assistant"} and isinstance(content, str):
+            out.append({"role": role, "content": content})
     return out
 
 def format_reply(decision: Dict[str, Any], result: Dict[str, Any]) -> str:
@@ -1504,12 +1509,13 @@ def format_reply(decision: Dict[str, Any], result: Dict[str, Any]) -> str:
 
 def chat_send(message: str, history: Any):
     message = (message or "").strip()
-    history = _coerce_tuple_history(history)
+    history = _coerce_message_history(history)
     if not message:
         return history, history, ""
+    history.append({"role": "user", "content": message})
     decision, result = run_now(message, source="chat")
     reply = format_reply(decision, result)
-    history.append((message, reply))
+    history.append({"role": "assistant", "content": reply})
     return history, history, ""
 
 # -----------------------------
