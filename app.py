@@ -203,6 +203,7 @@ def save_json_atomic(path: str, data: Any) -> bool:
                 os.fsync(f.fileno())
             except Exception:
                 pass
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         try:
             os.replace(tmp, path)
         except FileNotFoundError:
