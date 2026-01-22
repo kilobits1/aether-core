@@ -194,7 +194,10 @@ def load_json(path: str, default: Any) -> Any:
 def save_json_atomic(path: str, data: Any) -> bool:
     d = os.path.dirname(path) or "."
     os.makedirs(d, exist_ok=True)
-    tmp = os.path.join(d, os.path.basename(path) + ".tmp")
+
+    base = os.path.basename(path)
+    tmp = os.path.join(d, f".{base}.{uuid.uuid4().hex}.tmp")
+
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
@@ -203,21 +206,19 @@ def save_json_atomic(path: str, data: Any) -> bool:
                 os.fsync(f.fileno())
             except Exception:
                 pass
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        try:
-            os.replace(tmp, path)
-        except FileNotFoundError:
-            os.makedirs(d, exist_ok=True)
-            os.replace(tmp, path)
+
+        os.replace(tmp, path)
         return True
+
     except Exception as e:
         try:
             if os.path.exists(tmp):
                 os.remove(tmp)
         except Exception:
             pass
-        # Evitar recursión si falla LOG_FILE
-        if path != LOG_FILE and "log_event" in globals():
+
+        # Evitar recursión si falla el LOG_FILE
+        if "LOG_FILE" in globals() and path != LOG_FILE and "log_event" in globals():
             try:
                 log_event("JSON_WRITE_ERROR", {"file": path, "error": str(e)})
             except Exception:
