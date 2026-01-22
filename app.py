@@ -192,9 +192,10 @@ def load_json(path: str, default: Any) -> Any:
         return default
 
 def save_json_atomic(path: str, data: Any) -> bool:
-    tmp = f"{path}.tmp"
+    d = os.path.dirname(path) or "."
+    os.makedirs(d, exist_ok=True)
+    tmp = os.path.join(d, os.path.basename(path) + ".tmp")
     try:
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
             f.flush()
@@ -202,7 +203,11 @@ def save_json_atomic(path: str, data: Any) -> bool:
                 os.fsync(f.fileno())
             except Exception:
                 pass
-        os.replace(tmp, path)
+        try:
+            os.replace(tmp, path)
+        except FileNotFoundError:
+            os.makedirs(d, exist_ok=True)
+            os.replace(tmp, path)
         return True
     except Exception as e:
         try:
