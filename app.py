@@ -26,8 +26,10 @@ import time
 import json
 import uuid
 import hashlib
+import hmac
 import threading
 import importlib.util
+import copy
 from queue import PriorityQueue
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple, Optional
@@ -111,6 +113,22 @@ AETHER_HEARTBEAT_ENABLED = env_bool("AETHER_HEARTBEAT_ENABLED", True)
 AETHER_TASK_RUNNER_ENABLED = env_bool("AETHER_TASK_RUNNER_ENABLED", True)
 AETHER_TASK_MAX_RETRIES = int(os.environ.get("AETHER_TASK_MAX_RETRIES", "2"))
 AETHER_TASK_BUDGET = int(os.environ.get("AETHER_TASK_BUDGET", "3"))
+AETHER_TASK_TIMEOUT_SEC = int(os.environ.get("AETHER_TASK_TIMEOUT_SEC", "20"))
+
+# -----------------------------
+# TASK SECURITY (v40-v42)
+# -----------------------------
+AETHER_TASK_SECRET = os.environ.get("AETHER_TASK_SECRET", "")
+
+PERMISSIONS = {
+    "read_only": {"manual": True, "auto": True},
+    "analysis": {"manual": True, "auto": True},
+    "write_state": {"manual": True, "auto": False},
+    "io_export": {"manual": True, "auto": False},
+    "system": {"manual": False, "auto": False},
+}
+
+_SIGNATURE_WARNED = False
 
 # -----------------------------
 # SAFE MODE + WATCHDOG
@@ -389,7 +407,58 @@ def compute_priority(base: int) -> int:
         e = int(AETHER_STATE.get("energy", 0))
     return int(base) + (3 if e < 20 else 0)
 
-def enqueue_task(command: str, priority: int = 5, source: str = "external") -> Dict[str, Any]:
+def _infer_task_type(command: str, source: str) -> str:
+    cmd = (command or "").lower()
+    if source == "internal":
+        return "read_only"
+    if any(k in cmd for k in ["export", "snapshot export", "replica export"]):
+        return "io_export"
+    if any(k in cmd for k in ["restore", "import", "snapshot restore", "replica import"]):
+        return "write_state"
+    if any(k in cmd for k in ["reload", "plugin", "plugins"]):
+        return "system"
+    return "analysis"
+
+def _task_mode(task: Dict[str, Any]) -> str:
+    source = (task.get("source") or "").strip().lower()
+    if source in {"ui", "external", "chat"}:
+        return "manual"
+    return "auto"
+
+def can_execute(task_type: str, mode: str) -> bool:
+    policy = PERMISSIONS.get(task_type or "analysis", {})
+    return bool(policy.get(mode))
+
+def _canonical_task_payload(task: Dict[str, Any]) -> str:
+    payload = dict(task or {})
+    payload.pop("signature", None)
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+def sign_task(task: Dict[str, Any]) -> Optional[str]:
+    if not AETHER_TASK_SECRET:
+        return None
+    msg = _canonical_task_payload(task)
+    return hmac.new(AETHER_TASK_SECRET.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).hexdigest()
+
+def verify_task(task: Dict[str, Any]) -> bool:
+    global _SIGNATURE_WARNED
+    if not AETHER_TASK_SECRET:
+        if not _SIGNATURE_WARNED:
+            _SIGNATURE_WARNED = True
+            log_event("TASK_SIGNATURE_SKIPPED", {"reason": "AETHER_TASK_SECRET_EMPTY"})
+        return True
+    expected = sign_task(task)
+    provided = task.get("signature")
+    if not expected or not isinstance(provided, str):
+        return False
+    return hmac.compare_digest(expected, provided)
+
+def enqueue_task(
+    command: str,
+    priority: int = 5,
+    source: str = "external",
+    task_type: Optional[str] = None,
+) -> Dict[str, Any]:
     command = (command or "").strip()
     if not command:
         return {"ok": False, "error": "empty_command"}
@@ -419,7 +488,18 @@ def enqueue_task(command: str, priority: int = 5, source: str = "external") -> D
         _dedup_prune_if_needed()
 
     dyn = compute_priority(int(priority))
-    task = {"id": str(uuid.uuid4()), "command": command, "source": source, "created_at": safe_now()}
+    resolved_type = (task_type or "").strip() or _infer_task_type(command, source)
+    task = {
+        "id": str(uuid.uuid4()),
+        "command": command,
+        "source": source,
+        "created_at": safe_now(),
+        "task_type": resolved_type,
+        "status": "PENDING",
+    }
+    signature = sign_task(task)
+    if signature:
+        task["signature"] = signature
 
     with queue_lock:
         if command in QUEUE_SET:
@@ -427,7 +507,7 @@ def enqueue_task(command: str, priority: int = 5, source: str = "external") -> D
         TASK_QUEUE.put((dyn, task))
         QUEUE_SET.add(command)
 
-    log_event("ENQUEUE", {"command": command, "priority": dyn, "source": source})
+    log_event("ENQUEUE", {"command": command, "priority": dyn, "source": source, "task_type": resolved_type})
     update_dashboard()
     return {"ok": True, "task_id": task["id"], "priority": dyn}
 
@@ -1194,18 +1274,102 @@ def _store_memory_event(task_id: str, command: str, decision: Dict[str, Any], re
             AETHER_MEMORY[:] = AETHER_MEMORY[-MAX_MEMORY_ENTRIES:]
         save_json_atomic(MEMORY_FILE, AETHER_MEMORY)
 
+class IsolatedWorker(threading.Thread):
+    def __init__(self, task: Dict[str, Any]):
+        super().__init__(daemon=True)
+        self.task = copy.deepcopy(task)
+        self.result: Dict[str, Any] = {}
+
+    def run(self) -> None:
+        try:
+            command = (self.task.get("command") or "").strip()
+            domains = detect_domains(command)
+            decision = decide_engine(command, domains)
+            execution = obedient_execution(command, decision)
+            self.result = {
+                "decision": decision,
+                "domains": domains,
+                "result": execution,
+                "error": None,
+            }
+        except Exception as e:
+            self.result = {
+                "decision": {"mode": "error"},
+                "domains": [],
+                "result": {"success": False, "error": str(e)},
+                "error": str(e),
+            }
+
+def _preflight_execution(command: str) -> Optional[Dict[str, Any]]:
+    if KILL_SWITCH.get("status") != "ARMED":
+        return {"success": False, "error": "SYSTEM_HALTED"}
+    if ROOT_GOAL != "EXECUTE_USER_COMMANDS_ONLY":
+        KILL_SWITCH["status"] = "TRIGGERED"
+        log_event("KILL_SWITCH", {"reason": "ROOT_GOAL_VIOLATION"})
+        return {"success": False, "error": "ROOT_GOAL_VIOLATION"}
+    return None
+
 def process_task(task: Dict[str, Any]) -> None:
     command = (task.get("command") or "").strip()
-    domains = detect_domains(command)
-    decision = decide_engine(command, domains)
+    task_id = task.get("id", "unknown")
+    task_type = (task.get("task_type") or "analysis").strip()
+    mode = _task_mode(task)
 
-    log_event("TASK_START", {"command": command, "mode": decision.get("mode"), "domains": domains})
-    result = obedient_execution(command, decision)
+    # Level 40: Policy gate (task_type permissions)
+    if not can_execute(task_type, mode):
+        result = {"success": False, "error": "PERMISSION_DENIED"}
+        decision = {"mode": "blocked"}
+        log_event("TASK_PERMISSION_DENIED", {"task_id": task_id, "task_type": task_type, "mode": mode})
+        _store_memory_event(task_id, command, decision, result, task.get("source", "queue"))
+        log_event("TASK_FAILED", {"task_id": task_id, "command": command, "error": "PERMISSION_DENIED"})
+        update_dashboard()
+        return
+
+    # Level 41: Integrity gate (HMAC signature)
+    if not verify_task(task):
+        result = {"success": False, "error": "INVALID_SIGNATURE"}
+        decision = {"mode": "blocked"}
+        log_event("TASK_INVALID_SIGNATURE", {"task_id": task_id})
+        _store_memory_event(task_id, command, decision, result, task.get("source", "queue"))
+        log_event("TASK_FAILED", {"task_id": task_id, "command": command, "error": "INVALID_SIGNATURE"})
+        update_dashboard()
+        return
+
+    preflight_error = _preflight_execution(command)
+    if preflight_error:
+        decision = {"mode": "blocked"}
+        _store_memory_event(task_id, command, decision, preflight_error, task.get("source", "queue"))
+        log_event("TASK_FAILED", {"task_id": task_id, "command": command, "error": preflight_error.get("error")})
+        update_dashboard()
+        return
+
+    with state_lock:
+        AETHER_STATE["status"] = "WORKING"
+        AETHER_STATE["energy"] = max(0, int(AETHER_STATE.get("energy", 0)) - 1)
+        AETHER_STATE["last_cycle"] = safe_now()
+        AETHER_STATE["focus"] = "RECOVERY" if int(AETHER_STATE.get("energy", 0)) < 20 else "ACTIVE"
+        save_json_atomic(STATE_FILE, AETHER_STATE)
+
+    log_event("TASK_START", {"task_id": task_id, "command": command, "task_type": task_type, "mode": mode})
+
+    # Level 42: Isolated worker with deepcopy + timeout
+    worker = IsolatedWorker(task)
+    worker.start()
+    timeout = max(1, int(AETHER_TASK_TIMEOUT_SEC))
+    worker.join(timeout)
+
+    if worker.is_alive():
+        decision = {"mode": "timeout"}
+        result = {"success": False, "error": "TIMEOUT"}
+        log_event("TASK_TIMEOUT", {"task_id": task_id, "timeout_sec": timeout})
+    else:
+        decision = worker.result.get("decision") or {"mode": "unknown"}
+        result = worker.result.get("result") or {"success": False, "error": "NO_RESULT"}
+
     success = bool(result.get("success"))
     record_strategy(command, decision.get("mode", "unknown"), success)
-
-    _store_memory_event(task.get("id", "unknown"), command, decision, result, task.get("source", "queue"))
-    log_event("TASK_DONE", {"command": command, "success": success})
+    _store_memory_event(task_id, command, decision, result, task.get("source", "queue"))
+    log_event("TASK_DONE", {"task_id": task_id, "command": command, "success": success})
     update_dashboard()
 
 def task_worker() -> None:
@@ -1237,9 +1401,6 @@ def task_worker() -> None:
             while processed < budget and not TASK_QUEUE.empty():
                 _, task = TASK_QUEUE.get()
                 try:
-                    with state_lock:
-                        AETHER_STATE["status"] = "WORKING"
-                        save_json_atomic(STATE_FILE, AETHER_STATE)
                     process_task(task)
                 finally:
                     with queue_lock:
@@ -1277,7 +1438,7 @@ def scheduler_loop() -> None:
                     energy = int(AETHER_STATE.get("energy", 0))
                 interval_ok = last_ts is None or (now_ts - float(last_ts)) >= HEARTBEAT_INTERVAL_SEC
                 if interval_ok and energy >= HEARTBEAT_MIN_ENERGY and not tasks_queue_contains(HEARTBEAT_CMD):
-                    r = enqueue_task(HEARTBEAT_CMD, priority=10, source="internal")
+                    r = enqueue_task(HEARTBEAT_CMD, priority=10, source="internal", task_type="read_only")
                     if isinstance(r, dict) and r.get("ok"):
                         with state_lock:
                             AETHER_STATE["last_heartbeat_ts"] = now_ts
@@ -1471,19 +1632,6 @@ def ui_run_task(task_id):
 # CHAT HELPERS (tuple history)
 # -----------------------------
 
-def _coerce_message_history(history: Any) -> List[Dict[str, str]]:
-    if not isinstance(history, list):
-        return []
-    out: List[Dict[str, str]] = []
-    for item in history:
-        if not isinstance(item, dict):
-            continue
-        role = item.get("role")
-        content = item.get("content")
-        if role in {"user", "assistant"} and isinstance(content, str):
-            out.append({"role": role, "content": content})
-    return out
-
 def format_reply(decision: Dict[str, Any], result: Dict[str, Any]) -> str:
     if not result.get("success"):
         if result.get("error") == "SYSTEM_FROZEN":
@@ -1509,13 +1657,13 @@ def format_reply(decision: Dict[str, Any], result: Dict[str, Any]) -> str:
 
 def chat_send(message: str, history: Any):
     message = (message or "").strip()
-    history = _coerce_message_history(history)
+    if not isinstance(history, list):
+        history = []
     if not message:
         return history, history, ""
-    history.append({"role": "user", "content": message})
     decision, result = run_now(message, source="chat")
     reply = format_reply(decision, result)
-    history.append({"role": "assistant", "content": reply})
+    history.append((message, reply))
     return history, history, ""
 
 # -----------------------------
@@ -1591,7 +1739,7 @@ with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420, type="tuples", value=[])
+    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
     chat_state = gr.State([])
     user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins / plan: construir X", lines=2)
 
