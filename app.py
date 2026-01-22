@@ -1285,7 +1285,7 @@ class IsolatedWorker(threading.Thread):
             command = (self.task.get("command") or "").strip()
             domains = detect_domains(command)
             decision = decide_engine(command, domains)
-            execution = execute(command, decision)
+            execution = obedient_execution(command, decision)
             self.result = {
                 "decision": decision,
                 "domains": domains,
@@ -1632,19 +1632,6 @@ def ui_run_task(task_id):
 # CHAT HELPERS (tuple history)
 # -----------------------------
 
-def _coerce_message_history(history: Any) -> List[Dict[str, str]]:
-    if not isinstance(history, list):
-        return []
-    out: List[Dict[str, str]] = []
-    for item in history:
-        if not isinstance(item, dict):
-            continue
-        role = item.get("role")
-        content = item.get("content")
-        if role in {"user", "assistant"} and isinstance(content, str):
-            out.append({"role": role, "content": content})
-    return out
-
 def format_reply(decision: Dict[str, Any], result: Dict[str, Any]) -> str:
     if not result.get("success"):
         if result.get("error") == "SYSTEM_FROZEN":
@@ -1670,13 +1657,13 @@ def format_reply(decision: Dict[str, Any], result: Dict[str, Any]) -> str:
 
 def chat_send(message: str, history: Any):
     message = (message or "").strip()
-    history = _coerce_message_history(history)
+    if not isinstance(history, list):
+        history = []
     if not message:
         return history, history, ""
-    history.append({"role": "user", "content": message})
     decision, result = run_now(message, source="chat")
     reply = format_reply(decision, result)
-    history.append({"role": "assistant", "content": reply})
+    history.append((message, reply))
     return history, history, ""
 
 # -----------------------------
@@ -1752,7 +1739,7 @@ with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420, type="tuples", value=[])
+    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
     chat_state = gr.State([])
     user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins / plan: construir X", lines=2)
 
