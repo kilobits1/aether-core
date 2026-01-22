@@ -1618,18 +1618,22 @@ def _task_choices(project_id: str):
     return out
 
 def ui_refresh_projects():
-    return gr.Dropdown.update(choices=_project_choices(), value=_default_project_value())
+    return gr.update(choices=_project_choices(), value=_default_project_value())
 
 def ui_refresh_tasks(project_id):
-    return gr.Dropdown.update(choices=_task_choices(project_id))
+    choices = _task_choices(project_id)
+    value = choices[0][1] if choices else None
+    return gr.update(choices=choices, value=value)
 
 def ui_add_project(name):
     res = add_project(name)
-    return json.dumps(res, indent=2, ensure_ascii=False), gr.Dropdown.update(choices=_project_choices(), value=_default_project_value())
+    return json.dumps(res, indent=2, ensure_ascii=False), gr.update(choices=_project_choices(), value=_default_project_value())
 
 def ui_add_task(project_id, command):
     res = add_task(project_id, command)
-    return json.dumps(res, indent=2, ensure_ascii=False), gr.Dropdown.update(choices=_task_choices(project_id))
+    choices = _task_choices(project_id)
+    value = choices[0][1] if choices else None
+    return json.dumps(res, indent=2, ensure_ascii=False), gr.update(choices=choices, value=value)
 
 def ui_run_task(task_id):
     res = run_project_task(task_id)
@@ -1793,7 +1797,10 @@ with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
     project_selector = gr.Dropdown(label="Proyecto", choices=_project_choices(), value=_default_project_value())
     task_command = gr.Textbox(label="Nueva tarea (comando)", placeholder="Ej: revisar estado interno", lines=1)
     btn_add_task = gr.Button("Agregar tarea")
-    task_selector = gr.Dropdown(label="Tarea", choices=_task_choices(_default_project_value() or "default"))
+    _initial_pid = _default_project_value() or "default"
+    _initial_tasks = _task_choices(_initial_pid)
+    _initial_task_value = _initial_tasks[0][1] if _initial_tasks else None
+    task_selector = gr.Dropdown(label="Tarea", choices=_initial_tasks, value=_initial_task_value)
     btn_run_task = gr.Button("Run Task (policy/freeze)")
     orchestrator_out = gr.Code(label="Orchestrator output", language="json")
 
