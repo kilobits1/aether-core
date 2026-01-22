@@ -1666,40 +1666,37 @@ def format_reply(decision: Dict[str, Any], result: Dict[str, Any]) -> str:
         return json.dumps(val, indent=2, ensure_ascii=False)
     return str(val)
 
-def _coerce_history_messages(history: Any) -> List[Dict[str, str]]:
+def _coerce_history_pairs(history: Any) -> List[Tuple[str, str]]:
     if not isinstance(history, list):
         return []
-    if history and isinstance(history[0], dict):
-        cleaned: List[Dict[str, str]] = []
-        for item in history:
-            if not isinstance(item, dict):
-                continue
+    pairs: List[Tuple[str, str]] = []
+    for item in history:
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            user_text, bot_text = item
+            if isinstance(user_text, str) and isinstance(bot_text, str):
+                pairs.append((user_text, bot_text))
+        elif isinstance(item, dict):
             role = item.get("role")
             content = item.get("content")
-            if role in {"user", "assistant"} and isinstance(content, str):
-                cleaned.append({"role": role, "content": content})
-        return cleaned
-    legacy: List[Dict[str, str]] = []
-    for item in history:
-        if not isinstance(item, (list, tuple)) or len(item) != 2:
-            continue
-        user_text, bot_text = item
-        if isinstance(user_text, str) and user_text:
-            legacy.append({"role": "user", "content": user_text})
-        if isinstance(bot_text, str) and bot_text:
-            legacy.append({"role": "assistant", "content": bot_text})
-    return legacy
+            if role == "user" and isinstance(content, str):
+                pairs.append((content, ""))
+            elif role == "assistant" and isinstance(content, str):
+                if pairs:
+                    last_user, _ = pairs[-1]
+                    pairs[-1] = (last_user, content)
+                else:
+                    pairs.append(("", content))
+    return pairs
 
 def chat_send(message: str, history: Any):
     message = (message or "").strip()
-    history_messages = _coerce_history_messages(history)
+    history_pairs = _coerce_history_pairs(history)
     if not message:
-        return history_messages, history_messages, ""
+        return history_pairs, history_pairs, ""
     decision, result = run_now(message, source="chat")
     reply = format_reply(decision, result)
-    history_messages.append({"role": "user", "content": message})
-    history_messages.append({"role": "assistant", "content": reply})
-    return history_messages, history_messages, ""
+    history_pairs.append((message, reply))
+    return history_pairs, history_pairs, ""
 
 # -----------------------------
 # STARTUP (safe once)
@@ -1774,7 +1771,7 @@ with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[], type="messages")
+    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
     chat_state = gr.State([])
     user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins / plan: construir X", lines=2)
 
