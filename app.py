@@ -1869,4 +1869,9 @@ with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
 # -----------------------------
 PORT = int(os.environ.get("PORT", "7860"))
 demo.queue()
-demo.launch(server_name="0.0.0.0", server_port=PORT)
+demo.launch(
+    server_name="0.0.0.0",
+    server_port=PORT,
+    ssr_mode=False,
+    show_error=True,
+)
