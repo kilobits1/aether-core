@@ -179,6 +179,29 @@ events_log_lock = threading.Lock()
 # JSON IO (atomic)
 # -----------------------------
 
+IO_BACKOFF_THRESHOLD = 3
+IO_BACKOFF_BASE_SEC = 0.25
+IO_BACKOFF_MAX_SEC = 5.0
+IO_WRITE_COALESCE_DELAY_SEC = 0.0
+
+_path_state_lock = threading.Lock()
+_path_states: Dict[str, Dict[str, Any]] = {}
+
+def _get_path_state(path: str) -> Dict[str, Any]:
+    abs_path = os.path.abspath(path)
+    with _path_state_lock:
+        state = _path_states.get(abs_path)
+        if state is None:
+            state = {
+                "lock": threading.Lock(),
+                "in_progress": False,
+                "pending_data": None,
+                "fail_count": 0,
+                "backoff_until": 0.0,
+            }
+            _path_states[abs_path] = state
+        return state
+
 def load_json(path: str, default: Any) -> Any:
     try:
         if not os.path.exists(path):
@@ -197,33 +220,77 @@ def save_json_atomic(path: str, data: Any) -> bool:
 
     base = os.path.basename(path)
     tmp = os.path.join(d, f".{base}.{uuid.uuid4().hex}.tmp")
+    state = _get_path_state(path)
 
-    try:
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-            f.flush()
-            try:
-                os.fsync(f.fileno())
-            except Exception:
-                pass
+    with state["lock"]:
+        if state["in_progress"]:
+            # Prefer last-writer-wins to avoid overlapping writes from threads.
+            state["pending_data"] = data
+            return True
+        state["in_progress"] = True
 
-        os.replace(tmp, path)
-        return True
-
-    except Exception as e:
+    def _write_once(payload: Any) -> bool:
         try:
-            if os.path.exists(tmp):
-                os.remove(tmp)
-        except Exception:
-            pass
-
-        # Evitar recursión si falla el LOG_FILE
-        if "LOG_FILE" in globals() and path != LOG_FILE and "log_event" in globals():
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2, ensure_ascii=False)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+            os.replace(tmp, path)
+            return True
+        except Exception as e:
             try:
-                log_event("JSON_WRITE_ERROR", {"file": path, "error": str(e)})
+                if os.path.exists(tmp):
+                    os.remove(tmp)
             except Exception:
                 pass
-        return False
+            # Evitar recursión si falla el LOG_FILE
+            if "LOG_FILE" in globals() and path != LOG_FILE and "log_event" in globals():
+                try:
+                    log_event("JSON_WRITE_ERROR", {"file": path, "error": str(e)})
+                except Exception:
+                    pass
+            return False
+
+    payload = data
+    ok = True
+    while True:
+        now_ts = time.time()
+        with state["lock"]:
+            backoff_until = float(state.get("backoff_until") or 0.0)
+        if backoff_until and now_ts < backoff_until:
+            time.sleep(max(0.0, backoff_until - now_ts))
+
+        ok = _write_once(payload)
+        with state["lock"]:
+            if ok:
+                state["fail_count"] = 0
+                state["backoff_until"] = 0.0
+            else:
+                state["fail_count"] = int(state.get("fail_count", 0)) + 1
+                if state["fail_count"] >= IO_BACKOFF_THRESHOLD:
+                    backoff = min(IO_BACKOFF_MAX_SEC, IO_BACKOFF_BASE_SEC * (2 ** (state["fail_count"] - IO_BACKOFF_THRESHOLD)))
+                    state["backoff_until"] = time.time() + backoff
+                    if "LOG_FILE" in globals() and path != LOG_FILE and "log_event" in globals():
+                        try:
+                            log_event(
+                                "IO_BACKOFF_TRIGGERED",
+                                {"file": path, "attempts": state["fail_count"], "backoff_sec": backoff},
+                            )
+                        except Exception:
+                            pass
+            pending = state.get("pending_data")
+            if pending is None:
+                state["in_progress"] = False
+                break
+            # Only keep the latest queued payload to avoid redundant writes.
+            state["pending_data"] = None
+            payload = pending
+        if IO_WRITE_COALESCE_DELAY_SEC > 0:
+            time.sleep(IO_WRITE_COALESCE_DELAY_SEC)
+    return ok
 
 # -----------------------------
 # INITIAL STATE
