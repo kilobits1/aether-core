@@ -468,6 +468,57 @@ def _diagnosis_summary(diagnosis: Dict[str, Any]) -> Dict[str, Any]:
     return {"overall_health": overall, "top_issues": categories[:5], "last_updated": safe_now()}
 
 # -----------------------------
+# STABILITY CONTROLLER (v50)
+# -----------------------------
+STABILITY_STATE = {"mode": "NORMAL", "since": safe_now(), "reasons": []}
+
+def _recent_recovery_count(max_items: int = 10) -> int:
+    count = 0
+    with log_lock:
+        entries = list(AETHER_LOGS)
+    for entry in reversed(entries):
+        if count >= max_items:
+            break
+        if entry.get("type") == "RECOVERY_EVENT":
+            count += 1
+    return count
+
+def evaluate_stability() -> Dict[str, Any]:
+    # Conservative evaluation: prefer safety over throughput; no side effects.
+    diagnosis = get_self_diagnosis()
+    summary = _diagnosis_summary(diagnosis)
+    overall_health = summary.get("overall_health")
+    reasons = summary.get("top_issues") if isinstance(summary, dict) else []
+    recovery_count = _recent_recovery_count()
+    with throttle_lock:
+        throttle_mode = THROTTLE_STATE.get("mode")
+
+    if safe_mode_enabled() or is_frozen():
+        mode = "PAUSED"
+        reason_list = ["SAFE_MODE" if safe_mode_enabled() else "FROZEN"]
+        action = "Pause external execution; internal maintenance only."
+    elif overall_health == "CRITICAL" and recovery_count >= 2:
+        mode = "NEEDS_HUMAN"
+        reason_list = list(reasons) + ["RECOVERY_REPEAT"]
+        action = "Request human intervention; block execution until reviewed."
+    elif "RESOURCE_EXHAUSTION" in (reasons or []) or (throttle_mode in {"throttled", "burst"}):
+        mode = "DEGRADED"
+        reason_list = list(reasons) or ["THROTTLED"]
+        action = "Degrade to read-only/planner; avoid state mutations."
+    else:
+        mode = "NORMAL"
+        reason_list = list(reasons)
+        action = "Operate normally."
+
+    current = STABILITY_STATE.get("mode")
+    if current != mode:
+        STABILITY_STATE["mode"] = mode
+        STABILITY_STATE["since"] = safe_now()
+        STABILITY_STATE["reasons"] = reason_list
+        log_event("STABILITY_MODE_CHANGE", {"mode": mode, "reasons": reason_list})
+    return {"mode": mode, "reasons": reason_list, "recommended_action": action, "since": STABILITY_STATE.get("since")}
+
+# -----------------------------
 # SAFE MODE + WATCHDOG
 # -----------------------------
 AETHER_SAFE_MODE_ENABLED = env_bool("AETHER_SAFE_MODE_ENABLED", True)
@@ -1783,6 +1834,15 @@ def run_now(
     command = (command or "").strip()
     zone = resolve_zone(source, origin)
     inferred_type = (task_type_override or "").strip() or _infer_task_type(command, source)
+    stability = evaluate_stability()
+    stability_mode = stability.get("mode")
+    if stability_mode == "NEEDS_HUMAN":
+        return {"mode": "blocked"}, {"success": False, "error": "STABILITY_NEEDS_HUMAN"}
+    if stability_mode == "PAUSED":
+        return {"mode": "blocked"}, {"success": False, "error": "STABILITY_PAUSED"}
+    if stability_mode == "DEGRADED":
+        if not _is_plan_command(command) and inferred_type != "read_only":
+            return {"mode": "blocked"}, {"success": False, "error": "STABILITY_DEGRADED"}
     allowed, reason, specials = _trust_zone_allowed(zone, inferred_type, command)
     if not allowed:
         log_event(
@@ -1972,6 +2032,18 @@ def process_task(task: Dict[str, Any]) -> None:
     mode = _task_mode(task)
     zone = (task.get("zone") or "").strip()
     origin = task.get("origin")
+    stability = evaluate_stability()
+    stability_mode = stability.get("mode")
+    if stability_mode in {"NEEDS_HUMAN", "PAUSED", "DEGRADED"}:
+        allow_internal = stability_mode == "PAUSED" and zone == "INTERNAL" and task_type == "read_only"
+        allow_degraded = stability_mode == "DEGRADED" and task_type == "read_only"
+        if not (allow_internal or allow_degraded):
+            result = {"success": False, "error": f"STABILITY_{stability_mode}"}
+            decision = {"mode": "blocked"}
+            _store_memory_event(task_id, command, decision, result, task.get("source", "queue"))
+            log_event("TASK_FAILED", {"task_id": task_id, "command": command, "error": f"STABILITY_{stability_mode}"})
+            update_dashboard()
+            return
 
     if zone not in TRUST_ZONES:
         result = {"success": False, "error": "INVALID_ZONE"}
@@ -2593,6 +2665,7 @@ def ui_status() -> str:
     }
     diagnosis = get_self_diagnosis()
     diagnosis_summary = _diagnosis_summary(diagnosis)
+    stability = evaluate_stability()
     return json.dumps(
         {
             "state": s,
@@ -2620,6 +2693,11 @@ def ui_status() -> str:
             "snapshots": snapshot_list(),
             "trust_zone": trust_zone_summary,
             "diagnosis": diagnosis_summary,
+            "stability": {
+                "mode": stability.get("mode"),
+                "reasons": stability.get("reasons"),
+                "since": stability.get("since"),
+            },
         },
         indent=2,
         ensure_ascii=False,
@@ -2724,6 +2802,12 @@ def format_reply(decision: Dict[str, Any], result: Dict[str, Any]) -> str:
             return "Sistema congelado (freeze ON). Desactiva AETHER_FREEZE_MODE para ejecutar."
         if result.get("error") == "SAFE_MODE_ON":
             return "SAFE_MODE activo: ejecución externa bloqueada para diagnóstico."
+        if result.get("error") == "STABILITY_NEEDS_HUMAN":
+            return "⛔ Estabilidad crítica: se requiere intervención humana antes de ejecutar."
+        if result.get("error") == "STABILITY_PAUSED":
+            return "⏸️ Estabilidad en pausa: ejecución bloqueada (solo mantenimiento interno)."
+        if result.get("error") == "STABILITY_DEGRADED":
+            return "⚠️ Estabilidad degradada: solo lectura y planificación permitidas."
         return f"⛔ Error: {result.get('error', 'unknown_error')}"
     mode = (decision or {}).get("mode", "general")
     if mode == "planner":
