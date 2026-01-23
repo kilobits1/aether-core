@@ -132,6 +132,342 @@ PERMISSIONS = {
 _SIGNATURE_WARNED = False
 
 # -----------------------------
+# TRUST ZONES (v48)
+# -----------------------------
+TRUST_ZONES = {"UI", "CHAT", "INTERNAL", "ORCH"}
+TRUST_ZONE_DEFAULT = "CHAT"
+TRUST_ZONE_BLOCK_WINDOW = 50
+
+# Policy matrix (explicit allowlist, default deny).
+# How to test (manual):
+# - Try "reload plugins" in chat -> must be blocked.
+# - Try "snapshot restore demo1" in chat -> blocked.
+# - Try same actions from UI buttons -> allowed only where explicitly permitted.
+# - Verify logs show TRUST_ZONE_* events.
+# - Verify heartbeat internal tasks still run read_only.
+TRUST_ZONE_POLICIES = {
+    "UI": {
+        "task_types": {"read_only", "analysis", "write_state", "io_export"},
+        "special": {"reload_plugins", "snapshot_restore", "snapshot_import", "snapshot_export", "snapshot_create"},
+    },
+    "CHAT": {
+        "task_types": {"read_only", "analysis"},
+        "special": set(),
+    },
+    "INTERNAL": {
+        "task_types": {"read_only"},
+        "special": set(),
+    },
+    "ORCH": {
+        "task_types": {"read_only", "analysis", "write_state", "io_export"},
+        "special": set(),
+    },
+}
+
+def resolve_zone(source: str, origin: Optional[str]) -> str:
+    src = (source or "").strip().lower()
+    org = (origin or "").strip().lower()
+    if org in {"run_project_task", "orchestrator"} or src == "orchestrator":
+        return "ORCH"
+    if src == "internal" or org.startswith("scheduler"):
+        return "INTERNAL"
+    if src == "ui" or org.startswith("ui_"):
+        return "UI"
+    if src == "chat" or org.startswith("chat_"):
+        return "CHAT"
+    if src == "external":
+        return "CHAT"
+    return TRUST_ZONE_DEFAULT
+
+def _detect_special_commands(command: str) -> List[str]:
+    cmd = (command or "").lower()
+    specials = set()
+    if "reload" in cmd and "plugin" in cmd:
+        specials.add("reload_plugins")
+    if "snapshot restore" in cmd or ("snapshot" in cmd and "restore" in cmd):
+        specials.add("snapshot_restore")
+    if "snapshot import" in cmd or ("snapshot" in cmd and "import" in cmd):
+        specials.add("snapshot_import")
+    if "snapshot export" in cmd or ("snapshot" in cmd and "export" in cmd):
+        specials.add("snapshot_export")
+    if "snapshot create" in cmd or ("snapshot" in cmd and "create" in cmd):
+        specials.add("snapshot_create")
+    if "replica apply" in cmd:
+        specials.add("replica_apply")
+    if "replica import" in cmd:
+        specials.add("replica_import")
+    return sorted(specials)
+
+def _trust_zone_allowed(zone: str, task_type: str, command: str) -> Tuple[bool, str, List[str]]:
+    if zone not in TRUST_ZONES:
+        return False, "invalid_zone", []
+    policy = TRUST_ZONE_POLICIES.get(zone) or {}
+    allowed_types = policy.get("task_types") or set()
+    allowed_special = policy.get("special") or set()
+    specials = _detect_special_commands(command)
+
+    if task_type == "system":
+        return False, "system_blocked", specials
+    if task_type not in allowed_types:
+        return False, "task_type_blocked", specials
+    if specials:
+        for special in specials:
+            if special not in allowed_special:
+                return False, f"special_blocked:{special}", specials
+    return True, "", specials
+
+def _summarize_trust_zone_blocks() -> Dict[str, Any]:
+    counts = {z: 0 for z in TRUST_ZONES}
+    total = 0
+    with log_lock:
+        entries = list(AETHER_LOGS)
+    for entry in reversed(entries):
+        if total >= TRUST_ZONE_BLOCK_WINDOW:
+            break
+        if entry.get("type") not in {"TRUST_ZONE_BLOCK_ENQUEUE", "TRUST_ZONE_BLOCK_EXEC"}:
+            continue
+        info = entry.get("info", {})
+        zone = info.get("zone")
+        if zone in counts:
+            counts[zone] += 1
+        total += 1
+    return {"window": TRUST_ZONE_BLOCK_WINDOW, "total": total, "by_zone": counts}
+
+def _trust_zone_policy_snapshot() -> Dict[str, Any]:
+    snap: Dict[str, Any] = {}
+    for zone, policy in TRUST_ZONE_POLICIES.items():
+        snap[zone] = {
+            "task_types": sorted(policy.get("task_types") or []),
+            "special": sorted(policy.get("special") or []),
+        }
+    return snap
+
+def _collect_recent_errors(max_items: int = 8) -> List[Dict[str, Any]]:
+    # Deterministic error sampling: newest-first with fixed cap, no side effects.
+    recent: List[Dict[str, Any]] = []
+    with log_lock:
+        entries = list(AETHER_LOGS)
+    for entry in reversed(entries):
+        if len(recent) >= max_items:
+            break
+        if entry.get("type") in THROTTLE_ERROR_TYPES:
+            recent.append(entry)
+    return recent
+
+def _collect_recent_trust_zone_blocks(max_items: int = 8) -> List[Dict[str, Any]]:
+    recent: List[Dict[str, Any]] = []
+    with log_lock:
+        entries = list(AETHER_LOGS)
+    for entry in reversed(entries):
+        if len(recent) >= max_items:
+            break
+        if entry.get("type") in {"TRUST_ZONE_BLOCK_ENQUEUE", "TRUST_ZONE_BLOCK_EXEC"}:
+            recent.append(entry)
+    return recent
+
+def diagnose_system() -> Dict[str, Any]:
+    # Deterministic, side-effect-free diagnosis based only on in-memory state.
+    issues: List[Dict[str, Any]] = []
+    evidence: List[str]
+
+    with state_lock:
+        state_snapshot = dict(AETHER_STATE)
+    with throttle_lock:
+        throttle_snapshot = dict(THROTTLE_STATE)
+
+    safe_mode = dict(SAFE_MODE)
+    freeze_state = dict(FREEZE_STATE)
+    queue_size = int(TASK_QUEUE.qsize())
+    energy = int(state_snapshot.get("energy", 0))
+    last_cycle = state_snapshot.get("last_cycle")
+    now_ts = time.time()
+    last_cycle_ts = _parse_iso_ts(last_cycle)
+    watchdog_limit = max(0, int(AETHER_WATCHDOG_SEC))
+    watchdog_grace = max(0, int(AETHER_WATCHDOG_GRACE_SEC))
+
+    # SAFE_MODE classification: distinguish env-enabled vs. runtime triggers.
+    if safe_mode.get("enabled"):
+        reason = safe_mode.get("reason") or "unknown"
+        category = "SAFE_MODE_ENV" if reason == "ENV_ENABLED" else "UNKNOWN"
+        severity = "WARN" if category == "SAFE_MODE_ENV" else "CRITICAL"
+        evidence = [f"safe_mode_enabled={safe_mode.get('enabled')}", f"reason={reason}"]
+        issues.append(
+            {
+                "category": category,
+                "severity": severity,
+                "evidence": evidence,
+                "recommended_action": "Review SAFE_MODE reason and disable only after resolving root cause.",
+            }
+        )
+
+    # Manual freeze classification based on FREEZE_STATE.
+    if freeze_state.get("enabled"):
+        evidence = [f"freeze_enabled={freeze_state.get('enabled')}", f"since={freeze_state.get('since')}"]
+        issues.append(
+            {
+                "category": "MANUAL_FREEZE",
+                "severity": "WARN",
+                "evidence": evidence,
+                "recommended_action": "Unset AETHER_FREEZE_MODE to resume normal execution.",
+            }
+        )
+
+    # Watchdog stall detection uses last_cycle timestamps and watchdog config.
+    if watchdog_limit > 0 and last_cycle_ts is not None:
+        elapsed = now_ts - last_cycle_ts
+        if elapsed >= (watchdog_limit + watchdog_grace):
+            evidence = [
+                f"elapsed_since_last_cycle_sec={round(elapsed, 2)}",
+                f"watchdog_limit_sec={watchdog_limit}",
+                f"watchdog_grace_sec={watchdog_grace}",
+            ]
+            issues.append(
+                {
+                    "category": "WATCHDOG_STALL",
+                    "severity": "CRITICAL",
+                    "evidence": evidence,
+                    "recommended_action": "Inspect worker/scheduler loops and logs for stalls.",
+                }
+            )
+
+    # Throttle health and resource pressure assessment.
+    throttle_mode = throttle_snapshot.get("mode")
+    throttle_score = float(throttle_snapshot.get("score", 1.0) or 0.0)
+    if throttle_mode in {"throttled", "burst"} or throttle_score < 0.6:
+        evidence = [
+            f"throttle_mode={throttle_mode}",
+            f"throttle_score={round(throttle_score, 3)}",
+            f"queue_size={queue_size}",
+            f"energy={energy}",
+        ]
+        issues.append(
+            {
+                "category": "RESOURCE_EXHAUSTION",
+                "severity": "WARN",
+                "evidence": evidence,
+                "recommended_action": "Reduce load or wait for throttle recovery.",
+            }
+        )
+
+    # Trust zone violations from recent logs.
+    tz_blocks = _collect_recent_trust_zone_blocks()
+    if tz_blocks:
+        evidence = [f"trust_zone_blocks_recent={len(tz_blocks)}"]
+        issues.append(
+            {
+                "category": "TRUST_ZONE_VIOLATION",
+                "severity": "WARN",
+                "evidence": evidence,
+                "recommended_action": "Validate zone/origin metadata and policy allowlists.",
+            }
+        )
+
+    # Policy violations inferred from permission denials.
+    policy_denied = 0
+    with log_lock:
+        entries = list(AETHER_LOGS)
+    for entry in reversed(entries):
+        if entry.get("type") == "TASK_PERMISSION_DENIED":
+            policy_denied += 1
+            if policy_denied >= 3:
+                break
+    if policy_denied:
+        issues.append(
+            {
+                "category": "POLICY_VIOLATION",
+                "severity": "WARN",
+                "evidence": [f"permission_denied_recent={policy_denied}"],
+                "recommended_action": "Review task_type permissions and caller mode.",
+            }
+        )
+
+    # Task timeouts and IO instability signals.
+    timeout_count = 0
+    io_errors = 0
+    for entry in reversed(entries):
+        etype = entry.get("type")
+        if etype == "TASK_TIMEOUT":
+            timeout_count += 1
+        if etype == "JSON_WRITE_ERROR":
+            io_errors += 1
+        if timeout_count >= 3 and io_errors >= 3:
+            break
+    if timeout_count:
+        issues.append(
+            {
+                "category": "TASK_TIMEOUTS",
+                "severity": "WARN",
+                "evidence": [f"task_timeouts_recent={timeout_count}"],
+                "recommended_action": "Increase timeout or reduce workload complexity.",
+            }
+        )
+    if io_errors:
+        issues.append(
+            {
+                "category": "IO_INSTABILITY",
+                "severity": "WARN",
+                "evidence": [f"io_write_errors_recent={io_errors}"],
+                "recommended_action": "Check filesystem health and storage capacity.",
+            }
+        )
+
+    if not issues:
+        issues.append(
+            {
+                "category": "UNKNOWN",
+                "severity": "INFO",
+                "evidence": ["no_anomalies_detected"],
+                "recommended_action": "Monitor system status and logs for changes.",
+            }
+        )
+
+    # Deterministic ordering by category for stable output.
+    issues_sorted = sorted(issues, key=lambda item: item.get("category", ""))
+    return {
+        "timestamp": safe_now(),
+        "state": {
+            "status": state_snapshot.get("status"),
+            "energy": energy,
+            "queue_size": queue_size,
+            "last_cycle": last_cycle,
+        },
+        "safe_mode": safe_mode,
+        "freeze": freeze_state,
+        "watchdog": {
+            "watchdog_sec": int(AETHER_WATCHDOG_SEC),
+            "watchdog_grace_sec": int(AETHER_WATCHDOG_GRACE_SEC),
+            "last_cycle": last_cycle,
+        },
+        "throttle": {
+            "mode": throttle_snapshot.get("mode"),
+            "score": throttle_snapshot.get("score"),
+            "reasons": throttle_snapshot.get("reasons"),
+        },
+        "recent_errors": _collect_recent_errors(),
+        "recent_trust_zone_blocks": tz_blocks,
+        "issues": issues_sorted,
+    }
+
+def get_self_diagnosis() -> Dict[str, Any]:
+    # Wrapper to allow future expansion without changing callers.
+    return diagnose_system()
+
+def _diagnosis_summary(diagnosis: Dict[str, Any]) -> Dict[str, Any]:
+    issues = diagnosis.get("issues") if isinstance(diagnosis, dict) else []
+    categories = []
+    severity_rank = {"INFO": 0, "WARN": 1, "CRITICAL": 2}
+    max_sev = 0
+    if isinstance(issues, list):
+        for issue in issues:
+            category = issue.get("category")
+            if isinstance(category, str) and category not in categories:
+                categories.append(category)
+            sev = severity_rank.get(issue.get("severity", "INFO"), 0)
+            max_sev = max(max_sev, sev)
+    overall = "OK" if max_sev == 0 else ("DEGRADED" if max_sev == 1 else "CRITICAL")
+    return {"overall_health": overall, "top_issues": categories[:5], "last_updated": safe_now()}
+
+# -----------------------------
 # SAFE MODE + WATCHDOG
 # -----------------------------
 AETHER_SAFE_MODE_ENABLED = env_bool("AETHER_SAFE_MODE_ENABLED", True)
@@ -581,19 +917,21 @@ def enqueue_task(
     priority: int = 5,
     source: str = "external",
     task_type: Optional[str] = None,
+    origin: Optional[str] = None,
 ) -> Dict[str, Any]:
     command = (command or "").strip()
     if not command:
         return {"ok": False, "error": "empty_command"}
 
-    blocked_sources_in_safe = {"external", "chat"}
-    if safe_mode_enabled() and source in blocked_sources_in_safe:
-        log_event("SAFE_MODE_BLOCK_ENQUEUE", {"command": command, "source": source})
+    zone = resolve_zone(source, origin)
+    blocked_zones_in_safe = {"CHAT"}
+    if safe_mode_enabled() and zone in blocked_zones_in_safe:
+        log_event("SAFE_MODE_BLOCK_ENQUEUE", {"command": command, "source": source, "zone": zone})
         return {"ok": False, "blocked": True, "reason": "SAFE_MODE_ON"}
 
-    blocked_sources_in_freeze = {"external", "chat"}
-    if is_frozen() and source in blocked_sources_in_freeze:
-        log_event("FREEZE_BLOCK_ENQUEUE", {"command": command, "source": source})
+    blocked_zones_in_freeze = {"CHAT"}
+    if is_frozen() and zone in blocked_zones_in_freeze:
+        log_event("FREEZE_BLOCK_ENQUEUE", {"command": command, "source": source, "zone": zone})
         return {"ok": False, "blocked": True, "reason": "SYSTEM_FROZEN"}
 
     if (not AETHER_HEARTBEAT_ENABLED) and command.lower().strip() == HEARTBEAT_CMD:
@@ -612,6 +950,21 @@ def enqueue_task(
 
     dyn = compute_priority(int(priority))
     resolved_type = (task_type or "").strip() or _infer_task_type(command, source)
+    allowed, reason, specials = _trust_zone_allowed(zone, resolved_type, command)
+    if not allowed:
+        log_event(
+            "TRUST_ZONE_BLOCK_ENQUEUE",
+            {
+                "command": command,
+                "source": source,
+                "origin": origin,
+                "zone": zone,
+                "task_type": resolved_type,
+                "reason": reason,
+                "special": specials,
+            },
+        )
+        return {"ok": False, "blocked": True, "reason": reason}
     task = {
         "id": str(uuid.uuid4()),
         "command": command,
@@ -619,7 +972,10 @@ def enqueue_task(
         "created_at": safe_now(),
         "task_type": resolved_type,
         "status": "PENDING",
+        "zone": zone,
     }
+    if origin:
+        task["origin"] = origin
     signature = sign_task(task)
     if signature:
         task["signature"] = signature
@@ -630,7 +986,10 @@ def enqueue_task(
         TASK_QUEUE.put((dyn, task))
         QUEUE_SET.add(command)
 
-    log_event("ENQUEUE", {"command": command, "priority": dyn, "source": source, "task_type": resolved_type})
+    log_event(
+        "ENQUEUE",
+        {"command": command, "priority": dyn, "source": source, "task_type": resolved_type, "zone": zone, "origin": origin},
+    )
     update_dashboard()
     return {"ok": True, "task_id": task["id"], "priority": dyn}
 
@@ -1080,6 +1439,8 @@ def _normalize_task(task: Dict[str, Any]) -> None:
         task["retry_count"] = max(0, int(task.get("retry_count", 0)))
     except Exception:
         task["retry_count"] = 0
+    if not task.get("task_type"):
+        task["task_type"] = _infer_task_type(task.get("command") or "", "orchestrator")
     subtasks = task.get("subtasks")
     if not isinstance(subtasks, list):
         subtasks = []
@@ -1142,6 +1503,7 @@ def add_task(project_id: str, command: str) -> Dict[str, Any]:
         "status": "PENDING",
         "retry_count": 0,
         "subtasks": [],  # v32 planning output (propuestas)
+        "task_type": _infer_task_type(command, "orchestrator"),
     }
     with tasks_lock:
         AETHER_TASKS.append(task)
@@ -1412,8 +1774,31 @@ def obedient_execution(command: str, decision: Dict[str, Any]) -> Dict[str, Any]
 
     return execute(command, decision)
 
-def run_now(command: str, source: str = "chat") -> Tuple[Dict[str, Any], Dict[str, Any]]:
+def run_now(
+    command: str,
+    source: str = "chat",
+    origin: Optional[str] = None,
+    task_type_override: Optional[str] = None,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     command = (command or "").strip()
+    zone = resolve_zone(source, origin)
+    inferred_type = (task_type_override or "").strip() or _infer_task_type(command, source)
+    allowed, reason, specials = _trust_zone_allowed(zone, inferred_type, command)
+    if not allowed:
+        log_event(
+            "TRUST_ZONE_BLOCK_EXEC",
+            {
+                "command": command,
+                "source": source,
+                "origin": origin,
+                "zone": zone,
+                "task_type": inferred_type,
+                "reason": reason,
+                "special": specials,
+            },
+        )
+        update_dashboard()
+        return {"mode": "blocked"}, {"success": False, "error": "TRUST_ZONE_BLOCKED"}
 
     if _is_plan_command(command):
         subtasks = generate_plan(command)
@@ -1499,7 +1884,12 @@ def run_project_task(task_id: str) -> Dict[str, Any]:
         task["status"] = "RUNNING"
         save_json_atomic(TASKS_FILE, AETHER_TASKS)
 
-    decision, result = run_now(task.get("command") or "", source="orchestrator")
+    decision, result = run_now(
+        task.get("command") or "",
+        source="orchestrator",
+        origin="run_project_task",
+        task_type_override=task.get("task_type"),
+    )
     success = bool(result.get("success"))
     subtasks = _extract_subtasks_from_result(result)
 
@@ -1580,6 +1970,72 @@ def process_task(task: Dict[str, Any]) -> None:
     task_id = task.get("id", "unknown")
     task_type = (task.get("task_type") or "analysis").strip()
     mode = _task_mode(task)
+    zone = (task.get("zone") or "").strip()
+    origin = task.get("origin")
+
+    if zone not in TRUST_ZONES:
+        result = {"success": False, "error": "INVALID_ZONE"}
+        decision = {"mode": "blocked"}
+        log_event(
+            "TRUST_ZONE_BLOCK_EXEC",
+            {
+                "task_id": task_id,
+                "command": command,
+                "source": task.get("source"),
+                "origin": origin,
+                "zone": zone,
+                "task_type": task_type,
+                "reason": "missing_or_invalid_zone",
+            },
+        )
+        _store_memory_event(task_id, command, decision, result, task.get("source", "queue"))
+        log_event("TASK_FAILED", {"task_id": task_id, "command": command, "error": "INVALID_ZONE"})
+        update_dashboard()
+        return
+
+    resolved_zone = resolve_zone(task.get("source", ""), origin)
+    if resolved_zone != zone:
+        result = {"success": False, "error": "ZONE_MISMATCH"}
+        decision = {"mode": "blocked"}
+        log_event(
+            "TRUST_ZONE_BLOCK_EXEC",
+            {
+                "task_id": task_id,
+                "command": command,
+                "source": task.get("source"),
+                "origin": origin,
+                "zone": zone,
+                "resolved_zone": resolved_zone,
+                "task_type": task_type,
+                "reason": "zone_mismatch",
+            },
+        )
+        _store_memory_event(task_id, command, decision, result, task.get("source", "queue"))
+        log_event("TASK_FAILED", {"task_id": task_id, "command": command, "error": "ZONE_MISMATCH"})
+        update_dashboard()
+        return
+
+    allowed, reason, specials = _trust_zone_allowed(zone, task_type, command)
+    if not allowed:
+        result = {"success": False, "error": "TRUST_ZONE_BLOCKED"}
+        decision = {"mode": "blocked"}
+        log_event(
+            "TRUST_ZONE_BLOCK_EXEC",
+            {
+                "task_id": task_id,
+                "command": command,
+                "source": task.get("source"),
+                "origin": origin,
+                "zone": zone,
+                "task_type": task_type,
+                "reason": reason,
+                "special": specials,
+            },
+        )
+        _store_memory_event(task_id, command, decision, result, task.get("source", "queue"))
+        log_event("TASK_FAILED", {"task_id": task_id, "command": command, "error": "TRUST_ZONE_BLOCKED"})
+        update_dashboard()
+        return
 
     # Level 40: Policy gate (task_type permissions)
     if not can_execute(task_type, mode):
@@ -1909,7 +2365,13 @@ def scheduler_loop() -> None:
                     energy = int(AETHER_STATE.get("energy", 0))
                 interval_ok = last_ts is None or (now_ts - float(last_ts)) >= heartbeat_interval
                 if interval_ok and energy >= HEARTBEAT_MIN_ENERGY and not tasks_queue_contains(HEARTBEAT_CMD):
-                    r = enqueue_task(HEARTBEAT_CMD, priority=10, source="internal", task_type="read_only")
+                    r = enqueue_task(
+                        HEARTBEAT_CMD,
+                        priority=10,
+                        source="internal",
+                        task_type="read_only",
+                        origin="scheduler_loop",
+                    )
                     if isinstance(r, dict) and r.get("ok"):
                         with state_lock:
                             AETHER_STATE["last_heartbeat_ts"] = now_ts
@@ -2125,6 +2587,12 @@ def ui_status() -> str:
             "last_change": THROTTLE_STATE.get("last_change"),
             "reasons": THROTTLE_STATE.get("reasons"),
         }
+    trust_zone_summary = {
+        "blocks": _summarize_trust_zone_blocks(),
+        "policy": _trust_zone_policy_snapshot(),
+    }
+    diagnosis = get_self_diagnosis()
+    diagnosis_summary = _diagnosis_summary(diagnosis)
     return json.dumps(
         {
             "state": s,
@@ -2150,13 +2618,15 @@ def ui_status() -> str:
             "task_max_retries": max(0, int(AETHER_TASK_MAX_RETRIES)),
             "demo1_exists": os.path.exists(DEMO1_FILE),
             "snapshots": snapshot_list(),
+            "trust_zone": trust_zone_summary,
+            "diagnosis": diagnosis_summary,
         },
         indent=2,
         ensure_ascii=False,
     )
 
 def ui_enqueue(cmd: str, prio: int) -> Tuple[str, str]:
-    r = enqueue_task(cmd, int(prio), source="ui")
+    r = enqueue_task(cmd, int(prio), source="ui", origin="ui_enqueue")
     status_text = f"ENQUEUE_RESULT={json.dumps(r, ensure_ascii=False)}\n\n{ui_status()}"
     return status_text, ui_tail_logs()
 
@@ -2295,7 +2765,17 @@ def chat_send(message: str, history: Any):
     history_messages = _normalize_history_messages(history)
     if not message:
         return history_messages, history_messages, ""
-    decision, result = run_now(message, source="chat")
+    if message.lower() == "diagnose" or "why are you in safe mode" in message.lower():
+        diagnosis = get_self_diagnosis()
+        try:
+            log_event("DIAGNOSE_REQUEST", {"source": "chat"})
+        except Exception:
+            pass
+        payload = json.dumps(diagnosis, indent=2, ensure_ascii=False)
+        history_messages.append({"role": "user", "content": message})
+        history_messages.append({"role": "assistant", "content": payload})
+        return history_messages, history_messages, ""
+    decision, result = run_now(message, source="chat", origin="chat_send")
     reply = format_reply(decision, result)
     history_messages.append({"role": "user", "content": message})
     history_messages.append({"role": "assistant", "content": reply})
