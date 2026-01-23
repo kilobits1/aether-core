@@ -242,6 +242,231 @@ def _trust_zone_policy_snapshot() -> Dict[str, Any]:
         }
     return snap
 
+def _collect_recent_errors(max_items: int = 8) -> List[Dict[str, Any]]:
+    # Deterministic error sampling: newest-first with fixed cap, no side effects.
+    recent: List[Dict[str, Any]] = []
+    with log_lock:
+        entries = list(AETHER_LOGS)
+    for entry in reversed(entries):
+        if len(recent) >= max_items:
+            break
+        if entry.get("type") in THROTTLE_ERROR_TYPES:
+            recent.append(entry)
+    return recent
+
+def _collect_recent_trust_zone_blocks(max_items: int = 8) -> List[Dict[str, Any]]:
+    recent: List[Dict[str, Any]] = []
+    with log_lock:
+        entries = list(AETHER_LOGS)
+    for entry in reversed(entries):
+        if len(recent) >= max_items:
+            break
+        if entry.get("type") in {"TRUST_ZONE_BLOCK_ENQUEUE", "TRUST_ZONE_BLOCK_EXEC"}:
+            recent.append(entry)
+    return recent
+
+def diagnose_system() -> Dict[str, Any]:
+    # Deterministic, side-effect-free diagnosis based only on in-memory state.
+    issues: List[Dict[str, Any]] = []
+    evidence: List[str]
+
+    with state_lock:
+        state_snapshot = dict(AETHER_STATE)
+    with throttle_lock:
+        throttle_snapshot = dict(THROTTLE_STATE)
+
+    safe_mode = dict(SAFE_MODE)
+    freeze_state = dict(FREEZE_STATE)
+    queue_size = int(TASK_QUEUE.qsize())
+    energy = int(state_snapshot.get("energy", 0))
+    last_cycle = state_snapshot.get("last_cycle")
+    now_ts = time.time()
+    last_cycle_ts = _parse_iso_ts(last_cycle)
+    watchdog_limit = max(0, int(AETHER_WATCHDOG_SEC))
+    watchdog_grace = max(0, int(AETHER_WATCHDOG_GRACE_SEC))
+
+    # SAFE_MODE classification: distinguish env-enabled vs. runtime triggers.
+    if safe_mode.get("enabled"):
+        reason = safe_mode.get("reason") or "unknown"
+        category = "SAFE_MODE_ENV" if reason == "ENV_ENABLED" else "UNKNOWN"
+        severity = "WARN" if category == "SAFE_MODE_ENV" else "CRITICAL"
+        evidence = [f"safe_mode_enabled={safe_mode.get('enabled')}", f"reason={reason}"]
+        issues.append(
+            {
+                "category": category,
+                "severity": severity,
+                "evidence": evidence,
+                "recommended_action": "Review SAFE_MODE reason and disable only after resolving root cause.",
+            }
+        )
+
+    # Manual freeze classification based on FREEZE_STATE.
+    if freeze_state.get("enabled"):
+        evidence = [f"freeze_enabled={freeze_state.get('enabled')}", f"since={freeze_state.get('since')}"]
+        issues.append(
+            {
+                "category": "MANUAL_FREEZE",
+                "severity": "WARN",
+                "evidence": evidence,
+                "recommended_action": "Unset AETHER_FREEZE_MODE to resume normal execution.",
+            }
+        )
+
+    # Watchdog stall detection uses last_cycle timestamps and watchdog config.
+    if watchdog_limit > 0 and last_cycle_ts is not None:
+        elapsed = now_ts - last_cycle_ts
+        if elapsed >= (watchdog_limit + watchdog_grace):
+            evidence = [
+                f"elapsed_since_last_cycle_sec={round(elapsed, 2)}",
+                f"watchdog_limit_sec={watchdog_limit}",
+                f"watchdog_grace_sec={watchdog_grace}",
+            ]
+            issues.append(
+                {
+                    "category": "WATCHDOG_STALL",
+                    "severity": "CRITICAL",
+                    "evidence": evidence,
+                    "recommended_action": "Inspect worker/scheduler loops and logs for stalls.",
+                }
+            )
+
+    # Throttle health and resource pressure assessment.
+    throttle_mode = throttle_snapshot.get("mode")
+    throttle_score = float(throttle_snapshot.get("score", 1.0) or 0.0)
+    if throttle_mode in {"throttled", "burst"} or throttle_score < 0.6:
+        evidence = [
+            f"throttle_mode={throttle_mode}",
+            f"throttle_score={round(throttle_score, 3)}",
+            f"queue_size={queue_size}",
+            f"energy={energy}",
+        ]
+        issues.append(
+            {
+                "category": "RESOURCE_EXHAUSTION",
+                "severity": "WARN",
+                "evidence": evidence,
+                "recommended_action": "Reduce load or wait for throttle recovery.",
+            }
+        )
+
+    # Trust zone violations from recent logs.
+    tz_blocks = _collect_recent_trust_zone_blocks()
+    if tz_blocks:
+        evidence = [f"trust_zone_blocks_recent={len(tz_blocks)}"]
+        issues.append(
+            {
+                "category": "TRUST_ZONE_VIOLATION",
+                "severity": "WARN",
+                "evidence": evidence,
+                "recommended_action": "Validate zone/origin metadata and policy allowlists.",
+            }
+        )
+
+    # Policy violations inferred from permission denials.
+    policy_denied = 0
+    with log_lock:
+        entries = list(AETHER_LOGS)
+    for entry in reversed(entries):
+        if entry.get("type") == "TASK_PERMISSION_DENIED":
+            policy_denied += 1
+            if policy_denied >= 3:
+                break
+    if policy_denied:
+        issues.append(
+            {
+                "category": "POLICY_VIOLATION",
+                "severity": "WARN",
+                "evidence": [f"permission_denied_recent={policy_denied}"],
+                "recommended_action": "Review task_type permissions and caller mode.",
+            }
+        )
+
+    # Task timeouts and IO instability signals.
+    timeout_count = 0
+    io_errors = 0
+    for entry in reversed(entries):
+        etype = entry.get("type")
+        if etype == "TASK_TIMEOUT":
+            timeout_count += 1
+        if etype == "JSON_WRITE_ERROR":
+            io_errors += 1
+        if timeout_count >= 3 and io_errors >= 3:
+            break
+    if timeout_count:
+        issues.append(
+            {
+                "category": "TASK_TIMEOUTS",
+                "severity": "WARN",
+                "evidence": [f"task_timeouts_recent={timeout_count}"],
+                "recommended_action": "Increase timeout or reduce workload complexity.",
+            }
+        )
+    if io_errors:
+        issues.append(
+            {
+                "category": "IO_INSTABILITY",
+                "severity": "WARN",
+                "evidence": [f"io_write_errors_recent={io_errors}"],
+                "recommended_action": "Check filesystem health and storage capacity.",
+            }
+        )
+
+    if not issues:
+        issues.append(
+            {
+                "category": "UNKNOWN",
+                "severity": "INFO",
+                "evidence": ["no_anomalies_detected"],
+                "recommended_action": "Monitor system status and logs for changes.",
+            }
+        )
+
+    # Deterministic ordering by category for stable output.
+    issues_sorted = sorted(issues, key=lambda item: item.get("category", ""))
+    return {
+        "timestamp": safe_now(),
+        "state": {
+            "status": state_snapshot.get("status"),
+            "energy": energy,
+            "queue_size": queue_size,
+            "last_cycle": last_cycle,
+        },
+        "safe_mode": safe_mode,
+        "freeze": freeze_state,
+        "watchdog": {
+            "watchdog_sec": int(AETHER_WATCHDOG_SEC),
+            "watchdog_grace_sec": int(AETHER_WATCHDOG_GRACE_SEC),
+            "last_cycle": last_cycle,
+        },
+        "throttle": {
+            "mode": throttle_snapshot.get("mode"),
+            "score": throttle_snapshot.get("score"),
+            "reasons": throttle_snapshot.get("reasons"),
+        },
+        "recent_errors": _collect_recent_errors(),
+        "recent_trust_zone_blocks": tz_blocks,
+        "issues": issues_sorted,
+    }
+
+def get_self_diagnosis() -> Dict[str, Any]:
+    # Wrapper to allow future expansion without changing callers.
+    return diagnose_system()
+
+def _diagnosis_summary(diagnosis: Dict[str, Any]) -> Dict[str, Any]:
+    issues = diagnosis.get("issues") if isinstance(diagnosis, dict) else []
+    categories = []
+    severity_rank = {"INFO": 0, "WARN": 1, "CRITICAL": 2}
+    max_sev = 0
+    if isinstance(issues, list):
+        for issue in issues:
+            category = issue.get("category")
+            if isinstance(category, str) and category not in categories:
+                categories.append(category)
+            sev = severity_rank.get(issue.get("severity", "INFO"), 0)
+            max_sev = max(max_sev, sev)
+    overall = "OK" if max_sev == 0 else ("DEGRADED" if max_sev == 1 else "CRITICAL")
+    return {"overall_health": overall, "top_issues": categories[:5], "last_updated": safe_now()}
+
 # -----------------------------
 # SAFE MODE + WATCHDOG
 # -----------------------------
@@ -2366,6 +2591,8 @@ def ui_status() -> str:
         "blocks": _summarize_trust_zone_blocks(),
         "policy": _trust_zone_policy_snapshot(),
     }
+    diagnosis = get_self_diagnosis()
+    diagnosis_summary = _diagnosis_summary(diagnosis)
     return json.dumps(
         {
             "state": s,
@@ -2392,6 +2619,7 @@ def ui_status() -> str:
             "demo1_exists": os.path.exists(DEMO1_FILE),
             "snapshots": snapshot_list(),
             "trust_zone": trust_zone_summary,
+            "diagnosis": diagnosis_summary,
         },
         indent=2,
         ensure_ascii=False,
@@ -2536,6 +2764,16 @@ def chat_send(message: str, history: Any):
     message = (message or "").strip()
     history_messages = _normalize_history_messages(history)
     if not message:
+        return history_messages, history_messages, ""
+    if message.lower() == "diagnose" or "why are you in safe mode" in message.lower():
+        diagnosis = get_self_diagnosis()
+        try:
+            log_event("DIAGNOSE_REQUEST", {"source": "chat"})
+        except Exception:
+            pass
+        payload = json.dumps(diagnosis, indent=2, ensure_ascii=False)
+        history_messages.append({"role": "user", "content": message})
+        history_messages.append({"role": "assistant", "content": payload})
         return history_messages, history_messages, ""
     decision, result = run_now(message, source="chat", origin="chat_send")
     reply = format_reply(decision, result)
