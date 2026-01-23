@@ -1148,6 +1148,149 @@ def decide_engine(command: str, domains: List[str]) -> Dict[str, Any]:
         return {"mode": "ai_module", "confidence": 0.7}
     return {"mode": "general", "confidence": 0.7}
 
+REPLAY_SNAPSHOT_WINDOW_SEC = 15 * 60
+
+def _copy_memory_entries() -> List[Dict[str, Any]]:
+    # Copy under lock so replay reads a consistent view without blocking writers for long.
+    with memory_lock:
+        return list(AETHER_MEMORY)
+
+def _copy_log_entries() -> List[Dict[str, Any]]:
+    # Copy under lock to avoid replay racing with log appenders.
+    with log_lock:
+        return list(AETHER_LOGS)
+
+def _find_memory_entry(task_id: str, memory_entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    for entry in memory_entries:
+        if entry.get("task_id") == task_id:
+            return entry
+    return None
+
+def _find_log_command(task_id: str, log_entries: List[Dict[str, Any]]) -> Optional[str]:
+    for entry in reversed(log_entries):
+        info = entry.get("info")
+        if isinstance(info, dict) and info.get("task_id") == task_id:
+            command = info.get("command")
+            if isinstance(command, str) and command.strip():
+                return command
+    return None
+
+def _snapshot_meta(payload: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "name": payload.get("name"),
+        "created_at": payload.get("created_at"),
+        "version": payload.get("version"),
+    }
+
+def _find_snapshot_for_replay(target_ts: Optional[float]) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    if target_ts is None:
+        return None, None
+    best_payload = None
+    best_delta = None
+    for name in snapshot_list():
+        payload = load_json(_snapshot_path(name), None)
+        if not isinstance(payload, dict):
+            continue
+        created_ts = _parse_iso_ts(payload.get("created_at"))
+        if created_ts is None:
+            continue
+        delta = abs(created_ts - target_ts)
+        if best_delta is None or delta < best_delta:
+            best_delta = delta
+            best_payload = payload
+    if best_payload is None or best_delta is None or best_delta > REPLAY_SNAPSHOT_WINDOW_SEC:
+        return None, None
+    return best_payload, {"delta_sec": best_delta, **_snapshot_meta(best_payload)}
+
+def _memory_entry_from_snapshot(payload: Dict[str, Any], task_id: str) -> Optional[Dict[str, Any]]:
+    files = payload.get("files") if isinstance(payload, dict) else None
+    memory_entries = files.get("memory") if isinstance(files, dict) else None
+    if not isinstance(memory_entries, list):
+        return None
+    return _find_memory_entry(task_id, memory_entries)
+
+def _decision_diff(original: Dict[str, Any], replayed: Dict[str, Any]) -> Dict[str, Any]:
+    diff: Dict[str, Any] = {}
+    keys = set(original.keys()) | set(replayed.keys())
+    for key in sorted(keys):
+        if original.get(key) != replayed.get(key):
+            diff[key] = {"original": original.get(key), "replayed": replayed.get(key)}
+    return diff
+
+def replay_task(task_id: str, dry_run: bool = True) -> Dict[str, Any]:
+    task_id = (task_id or "").strip()
+    if not task_id:
+        return {"ok": False, "error": "task_id_required"}
+
+    # Replay never executes commands to preserve audit safety across environments.
+    memory_entries = _copy_memory_entries()
+    log_entries = _copy_log_entries()
+    memory_entry = _find_memory_entry(task_id, memory_entries)
+    command = memory_entry.get("command") if memory_entry else None
+
+    if not isinstance(command, str) or not command.strip():
+        command = _find_log_command(task_id, log_entries)
+
+    if not isinstance(command, str) or not command.strip():
+        return {"ok": False, "error": "task_not_found"}
+
+    original_ts = _parse_iso_ts(memory_entry.get("timestamp")) if isinstance(memory_entry, dict) else None
+    snapshot_payload, snapshot_info = _find_snapshot_for_replay(original_ts)
+
+    if memory_entry is None and snapshot_payload:
+        memory_entry = _memory_entry_from_snapshot(snapshot_payload, task_id)
+
+    original_decision = memory_entry.get("decision") if isinstance(memory_entry, dict) else None
+    original_domains = memory_entry.get("domains") if isinstance(memory_entry, dict) else None
+
+    domains = detect_domains(command)
+    replayed_decision = decide_engine(command, domains)
+
+    diff = _decision_diff(original_decision or {}, replayed_decision or {})
+
+    snapshot_modules = None
+    if isinstance(snapshot_payload, dict):
+        files = snapshot_payload.get("files")
+        if isinstance(files, dict):
+            snapshot_modules = files.get("modules")
+
+    with modules_lock:
+        current_modules = list(LOADED_MODULES.keys())
+
+    deterministic = snapshot_payload is not None
+    deterministic_reason = "snapshot_matched" if snapshot_payload else "no_snapshot"
+    if snapshot_modules is not None and isinstance(snapshot_modules, list):
+        if sorted(snapshot_modules) != sorted(current_modules):
+            deterministic = False
+            deterministic_reason = "modules_changed"
+
+    return {
+        "ok": True,
+        "task_id": task_id,
+        "dry_run": bool(dry_run),
+        # Ensure audits can explain non-determinism without touching runtime state.
+        "deterministic": bool(deterministic),
+        "deterministic_reason": deterministic_reason,
+        "command": command,
+        "domain_detection": {
+            "original": original_domains,
+            "replayed": domains,
+        },
+        "decision_trace": {
+            "original": original_decision,
+            "replayed": replayed_decision,
+            "differences": diff,
+        },
+        "snapshot": {
+            "used": snapshot_payload is not None,
+            "info": snapshot_info,
+        },
+        "modules": {
+            "original": snapshot_modules,
+            "current": current_modules,
+        },
+    }
+
 def _is_plan_command(command: str) -> bool:
     return (command or "").strip().lower().startswith("plan:")
 
