@@ -1771,7 +1771,7 @@ with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[], type="tuples")
+    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
     chat_state = gr.State([])
     user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins / plan: construir X", lines=2)
 
