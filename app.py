@@ -379,10 +379,10 @@ def log_event(t: str, info: Any) -> None:
         save_json_atomic(LOG_FILE, AETHER_LOGS)
     _append_events_log(entry)
 
-TASK_STATUSES = {"PENDING", "RUNNING", "DONE", "FAILED"}
+TASK_STATUSES = {"PENDING", "RUNNING", "DONE", "FAILED", "RECOVERED"}
 
 def _task_status_counts() -> Dict[str, int]:
-    counts = {"PENDING": 0, "RUNNING": 0, "DONE": 0, "FAILED": 0}
+    counts = {"PENDING": 0, "RUNNING": 0, "DONE": 0, "FAILED": 0, "RECOVERED": 0}
     with tasks_lock:
         for t in AETHER_TASKS:
             s = t.get("status")
@@ -1713,6 +1713,136 @@ def watchdog_loop() -> None:
             time.sleep(2.0)
 
 # -----------------------------
+# CRASH RECOVERY BRAIN (v46)
+# -----------------------------
+
+_RECOVERY_RAN = False
+
+def _detect_unclean_shutdown() -> Tuple[bool, str]:
+    # Conservative signals only: incomplete tasks or WORKING state from last run.
+    with tasks_lock:
+        running = [t for t in AETHER_TASKS if t.get("status") == "RUNNING"]
+    if running:
+        return True, "running_tasks"
+    with state_lock:
+        status = AETHER_STATE.get("status")
+    if status == "WORKING":
+        return True, "state_working"
+    return False, "clean_shutdown"
+
+def _latest_snapshot_payload() -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    best_payload = None
+    best_key = None
+    best_ts = None
+    for name in snapshot_list():
+        payload = load_json(_snapshot_path(name), None)
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            continue
+        created_ts = _parse_iso_ts(payload.get("created_at"))
+        if created_ts is None:
+            try:
+                created_ts = os.path.getmtime(_snapshot_path(name))
+            except Exception:
+                created_ts = None
+        if created_ts is None:
+            continue
+        if best_ts is None or created_ts > best_ts:
+            best_ts = created_ts
+            best_payload = payload
+            best_key = name
+    return best_payload, best_key
+
+def _apply_recovery_payload(payload: Dict[str, Any]) -> None:
+    files = payload.get("files", {}) if isinstance(payload, dict) else {}
+    st = files.get("state", dict(DEFAULT_STATE))
+    mem = files.get("memory", [])
+    strat = files.get("strategic", {"patterns": {}, "failures": {}, "history": [], "last_update": None})
+    logs = files.get("logs", [])
+    projects = files.get("projects", [])
+    tasks = files.get("tasks", [])
+
+    with state_lock:
+        prev_energy = AETHER_STATE.get("energy", DEFAULT_STATE.get("energy", 100))
+        AETHER_STATE.clear()
+        AETHER_STATE.update(st if isinstance(st, dict) else dict(DEFAULT_STATE))
+        # Preserve energy to avoid unintended budget shifts during recovery.
+        AETHER_STATE["energy"] = prev_energy
+        AETHER_STATE["version"] = AETHER_VERSION
+        save_json_atomic(STATE_FILE, AETHER_STATE)
+
+    with memory_lock:
+        AETHER_MEMORY.clear()
+        if isinstance(mem, list):
+            AETHER_MEMORY.extend(mem)
+        save_json_atomic(MEMORY_FILE, AETHER_MEMORY)
+
+    with strategic_lock:
+        STRATEGIC_MEMORY.clear()
+        STRATEGIC_MEMORY.update(
+            strat if isinstance(strat, dict) else {"patterns": {}, "failures": {}, "history": [], "last_update": None}
+        )
+        save_json_atomic(STRATEGIC_FILE, STRATEGIC_MEMORY)
+
+    with log_lock:
+        AETHER_LOGS.clear()
+        if isinstance(logs, list):
+            AETHER_LOGS.extend(logs)
+        save_json_atomic(LOG_FILE, AETHER_LOGS)
+
+    with projects_lock:
+        AETHER_PROJECTS.clear()
+        if isinstance(projects, list) and projects:
+            AETHER_PROJECTS.extend(projects)
+        else:
+            AETHER_PROJECTS.extend(list(DEFAULT_PROJECTS))
+        save_json_atomic(PROJECTS_FILE, AETHER_PROJECTS)
+
+    with tasks_lock:
+        AETHER_TASKS.clear()
+        if isinstance(tasks, list):
+            AETHER_TASKS.extend(tasks)
+        _normalize_tasks_locked()
+        save_json_atomic(TASKS_FILE, AETHER_TASKS)
+
+def _mark_recovered_tasks() -> int:
+    recovered = 0
+    with tasks_lock:
+        for task in AETHER_TASKS:
+            if task.get("status") == "RUNNING":
+                # Preserve retry_count/metadata; only update status for safety.
+                task["status"] = "RECOVERED"
+                recovered += 1
+        if recovered:
+            save_json_atomic(TASKS_FILE, AETHER_TASKS)
+    return recovered
+
+def crash_recovery_brain() -> Dict[str, Any]:
+    global _RECOVERY_RAN
+    if _RECOVERY_RAN:
+        return {"recovered": False, "reason": "already_ran", "restored_from": "state", "tasks_recovered": 0, "timestamp": safe_now()}
+    _RECOVERY_RAN = True
+
+    unclean, reason = _detect_unclean_shutdown()
+    restored_from = "state"
+    if unclean:
+        snapshot_payload, snap_name = _latest_snapshot_payload()
+        if snapshot_payload:
+            _apply_recovery_payload(snapshot_payload)
+            restored_from = "snapshot"
+            reason = f"{reason}:{snap_name or 'latest'}"
+
+    tasks_recovered = _mark_recovered_tasks() if unclean else 0
+    report = {
+        "recovered": bool(unclean),
+        "reason": reason,
+        "restored_from": restored_from,
+        "tasks_recovered": int(tasks_recovered),
+        "timestamp": safe_now(),
+    }
+    log_event("RECOVERY_EVENT", report)
+    return report
+
+# -----------------------------
 # UI HELPERS
 # -----------------------------
 
@@ -1925,6 +2055,8 @@ def start_aether() -> str:
     _STARTED = True
 
     ensure_demo1()
+    # Level 46: Crash Recovery Brain runs once at startup before any workers.
+    crash_recovery_brain()
     ensure_projects()
     reload_ai_modules()
 
