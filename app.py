@@ -1666,37 +1666,35 @@ def format_reply(decision: Dict[str, Any], result: Dict[str, Any]) -> str:
         return json.dumps(val, indent=2, ensure_ascii=False)
     return str(val)
 
-def _coerce_history_pairs(history: Any) -> List[Tuple[str, str]]:
+def _normalize_history_messages(history: Any) -> List[Dict[str, str]]:
     if not isinstance(history, list):
         return []
-    pairs: List[Tuple[str, str]] = []
+    messages: List[Dict[str, str]] = []
     for item in history:
-        if isinstance(item, (list, tuple)) and len(item) == 2:
-            user_text, bot_text = item
-            if isinstance(user_text, str) and isinstance(bot_text, str):
-                pairs.append((user_text, bot_text))
-        elif isinstance(item, dict):
+        if isinstance(item, dict):
             role = item.get("role")
             content = item.get("content")
-            if role == "user" and isinstance(content, str):
-                pairs.append((content, ""))
-            elif role == "assistant" and isinstance(content, str):
-                if pairs:
-                    last_user, _ = pairs[-1]
-                    pairs[-1] = (last_user, content)
-                else:
-                    pairs.append(("", content))
-    return pairs
+            if isinstance(role, str) and isinstance(content, str):
+                if role in {"user", "assistant"}:
+                    messages.append({"role": role, "content": content})
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            user_text, bot_text = item
+            if isinstance(user_text, str):
+                messages.append({"role": "user", "content": user_text})
+            if isinstance(bot_text, str):
+                messages.append({"role": "assistant", "content": bot_text})
+    return messages
 
 def chat_send(message: str, history: Any):
     message = (message or "").strip()
-    history_pairs = _coerce_history_pairs(history)
+    history_messages = _normalize_history_messages(history)
     if not message:
-        return history_pairs, history_pairs, ""
+        return history_messages, history_messages, ""
     decision, result = run_now(message, source="chat")
     reply = format_reply(decision, result)
-    history_pairs.append((message, reply))
-    return history_pairs, history_pairs, ""
+    history_messages.append({"role": "user", "content": message})
+    history_messages.append({"role": "assistant", "content": reply})
+    return history_messages, history_messages, ""
 
 # -----------------------------
 # STARTUP (safe once)
@@ -1771,7 +1769,7 @@ with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
 
     boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[], type="tuples")
+    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
     chat_state = gr.State([])
     user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins / plan: construir X", lines=2)
 
