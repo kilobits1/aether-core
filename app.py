@@ -114,6 +114,7 @@ AETHER_TASK_RUNNER_ENABLED = env_bool("AETHER_TASK_RUNNER_ENABLED", True)
 AETHER_TASK_MAX_RETRIES = int(os.environ.get("AETHER_TASK_MAX_RETRIES", "2"))
 AETHER_TASK_BUDGET = int(os.environ.get("AETHER_TASK_BUDGET", "3"))
 AETHER_TASK_TIMEOUT_SEC = int(os.environ.get("AETHER_TASK_TIMEOUT_SEC", "20"))
+AETHER_TASK_BUDGET_MAX = int(os.environ.get("AETHER_TASK_BUDGET_MAX", str(max(1, int(AETHER_TASK_BUDGET)))))
 
 # -----------------------------
 # TASK SECURITY (v40-v42)
@@ -174,6 +175,7 @@ projects_lock = threading.Lock()
 tasks_lock = threading.Lock()
 snap_lock = threading.Lock()
 events_log_lock = threading.Lock()
+throttle_lock = threading.Lock()
 
 # -----------------------------
 # JSON IO (atomic)
@@ -313,6 +315,53 @@ STRATEGIC_MEMORY: Dict[str, Any] = load_json(
     {"patterns": {}, "failures": {}, "history": [], "last_update": None},
 )
 AETHER_LOGS: List[Dict[str, Any]] = load_json(LOG_FILE, [])
+
+# -----------------------------
+# ADAPTIVE THROTTLING (v47)
+# -----------------------------
+# Policy: compute a lightweight health score from recent errors, queue pressure,
+# energy, and safety flags. Apply conservative scaling with hysteresis and cooldown
+# to avoid oscillations. No new threads; called inside existing loops.
+THROTTLE_ERROR_WINDOW_SEC = 90
+THROTTLE_BURST_WINDOW_SEC = 30
+THROTTLE_BURST_COUNT = 3
+THROTTLE_DOWN_THRESHOLD = 0.5
+THROTTLE_UP_THRESHOLD = 0.75
+THROTTLE_STABLE_SEC = 30
+THROTTLE_COOLDOWN_SEC = 15
+THROTTLE_STATE_LOG_SEC = 60
+
+THROTTLE_ERROR_TYPES = {
+    "WORKER_ERROR",
+    "SCHEDULER_ERROR",
+    "MODULE_RUN_ERROR",
+    "JSON_WRITE_ERROR",
+    "TASK_TIMEOUT",
+}
+
+BASE_WORKER_TICK_SEC = 0.25
+BASE_SCHED_SLEEP_SEC = 2.0
+WORKER_TICK_MIN_SEC = 0.1
+WORKER_TICK_MAX_SEC = 2.5
+SCHED_SLEEP_MIN_SEC = 0.5
+SCHED_SLEEP_MAX_SEC = 6.0
+HEARTBEAT_INTERVAL_MIN_SEC = 30
+HEARTBEAT_INTERVAL_MAX_SEC = 600
+
+THROTTLE_STATE: Dict[str, Any] = {
+    "score": 1.0,
+    "mode": "normal",
+    "effective_budget": max(1, int(AETHER_TASK_BUDGET)),
+    "effective_tick_sec": float(BASE_WORKER_TICK_SEC),
+    "effective_sched_sleep_sec": float(BASE_SCHED_SLEEP_SEC),
+    "effective_heartbeat_interval": int(HEARTBEAT_INTERVAL_SEC),
+    "last_change": safe_now(),
+    "last_change_ts": 0.0,
+    "stable_since_ts": None,
+    "cooldown_until_ts": 0.0,
+    "last_state_log_ts": 0.0,
+    "reasons": [],
+}
 
 DEFAULT_PROJECTS = [{"id": "default", "name": "Default", "created_at": safe_now()}]
 AETHER_PROJECTS: List[Dict[str, Any]] = load_json(PROJECTS_FILE, [])
@@ -1589,6 +1638,207 @@ def process_task(task: Dict[str, Any]) -> None:
     log_event("TASK_DONE", {"task_id": task_id, "command": command, "success": success})
     update_dashboard()
 
+def _clamp(value: float, min_value: float, max_value: float) -> float:
+    return max(min_value, min(max_value, value))
+
+def _recent_error_stats(now_ts: float) -> Tuple[int, int]:
+    window_start = now_ts - THROTTLE_ERROR_WINDOW_SEC
+    burst_start = now_ts - THROTTLE_BURST_WINDOW_SEC
+    recent_errors = 0
+    burst_errors = 0
+    with log_lock:
+        entries = list(AETHER_LOGS)
+    for entry in reversed(entries):
+        ts = entry.get("timestamp")
+        if not isinstance(ts, str):
+            continue
+        try:
+            entry_ts = datetime.fromisoformat(ts).timestamp()
+        except Exception:
+            continue
+        if entry_ts < window_start:
+            break
+        if entry.get("type") in THROTTLE_ERROR_TYPES:
+            recent_errors += 1
+            if entry_ts >= burst_start:
+                burst_errors += 1
+    return recent_errors, burst_errors
+
+def _compute_throttle_health() -> Tuple[float, List[str], bool]:
+    reasons: List[str] = []
+    now_ts = time.time()
+    recent_errors, burst_errors = _recent_error_stats(now_ts)
+    if recent_errors:
+        reasons.append(f"errors_last_{THROTTLE_ERROR_WINDOW_SEC}s:{recent_errors}")
+    if burst_errors:
+        reasons.append(f"errors_last_{THROTTLE_BURST_WINDOW_SEC}s:{burst_errors}")
+
+    queue_size = TASK_QUEUE.qsize()
+    if queue_size:
+        reasons.append(f"queue:{queue_size}")
+
+    with state_lock:
+        energy = int(AETHER_STATE.get("energy", 0))
+    if energy < 40:
+        reasons.append(f"energy:{energy}")
+
+    if safe_mode_enabled():
+        reasons.append("safe_mode")
+    if is_frozen():
+        reasons.append("freeze")
+
+    score = 1.0
+    score -= min(0.6, recent_errors * 0.08)
+    score -= min(0.25, max(0, queue_size - 2) * 0.03)
+    if energy < 60:
+        score -= min(0.3, (60 - energy) * 0.01)
+    if safe_mode_enabled():
+        score -= 0.2
+    if is_frozen():
+        score -= 0.2
+    score = _clamp(score, 0.1, 1.0)
+    burst = burst_errors >= THROTTLE_BURST_COUNT
+    return score, reasons, burst
+
+def _step_toward(current: float, target: float, step_frac: float = 0.2) -> float:
+    return current + (target - current) * step_frac
+
+def update_throttle_state() -> Dict[str, Any]:
+    now_ts = time.time()
+    score, reasons, burst = _compute_throttle_health()
+    scale = _clamp(score, 0.2, 1.0)
+
+    base_budget = max(1, int(AETHER_TASK_BUDGET))
+    target_budget = int(_clamp(round(base_budget * scale), 1, max(1, int(AETHER_TASK_BUDGET_MAX))))
+    target_tick = _clamp(BASE_WORKER_TICK_SEC / scale, WORKER_TICK_MIN_SEC, WORKER_TICK_MAX_SEC)
+    target_sched = _clamp(BASE_SCHED_SLEEP_SEC / scale, SCHED_SLEEP_MIN_SEC, SCHED_SLEEP_MAX_SEC)
+    target_heartbeat = int(
+        _clamp(int(round(HEARTBEAT_INTERVAL_SEC / scale)), HEARTBEAT_INTERVAL_MIN_SEC, HEARTBEAT_INTERVAL_MAX_SEC)
+    )
+
+    with throttle_lock:
+        current_budget = int(THROTTLE_STATE.get("effective_budget", base_budget))
+        current_tick = float(THROTTLE_STATE.get("effective_tick_sec", BASE_WORKER_TICK_SEC))
+        current_sched = float(THROTTLE_STATE.get("effective_sched_sleep_sec", BASE_SCHED_SLEEP_SEC))
+        current_heartbeat = int(THROTTLE_STATE.get("effective_heartbeat_interval", HEARTBEAT_INTERVAL_SEC))
+        last_change_ts = float(THROTTLE_STATE.get("last_change_ts") or 0.0)
+        stable_since_ts = THROTTLE_STATE.get("stable_since_ts")
+        cooldown_until = float(THROTTLE_STATE.get("cooldown_until_ts") or 0.0)
+        last_state_log_ts = float(THROTTLE_STATE.get("last_state_log_ts") or 0.0)
+
+        if score >= THROTTLE_UP_THRESHOLD:
+            if stable_since_ts is None:
+                stable_since_ts = now_ts
+        else:
+            stable_since_ts = None
+
+        allow_up = (
+            stable_since_ts is not None
+            and (now_ts - stable_since_ts) >= THROTTLE_STABLE_SEC
+            and now_ts >= cooldown_until
+        )
+
+        mode = "normal"
+        changed = False
+        if burst:
+            mode = "burst"
+            cooldown_until = max(cooldown_until, now_ts + THROTTLE_COOLDOWN_SEC)
+            if target_budget < current_budget:
+                current_budget = target_budget
+                changed = True
+            if target_tick > current_tick:
+                current_tick = target_tick
+                changed = True
+            if target_sched > current_sched:
+                current_sched = target_sched
+                changed = True
+            if target_heartbeat > current_heartbeat:
+                current_heartbeat = target_heartbeat
+                changed = True
+        else:
+            if score < THROTTLE_DOWN_THRESHOLD:
+                mode = "throttled"
+                cooldown_until = max(cooldown_until, now_ts + THROTTLE_COOLDOWN_SEC)
+                if target_budget < current_budget:
+                    current_budget = target_budget
+                    changed = True
+                if target_tick > current_tick:
+                    current_tick = target_tick
+                    changed = True
+                if target_sched > current_sched:
+                    current_sched = target_sched
+                    changed = True
+                if target_heartbeat > current_heartbeat:
+                    current_heartbeat = target_heartbeat
+                    changed = True
+            else:
+                if allow_up:
+                    if target_budget > current_budget:
+                        current_budget = min(target_budget, current_budget + 1)
+                        changed = True
+                    if target_tick < current_tick:
+                        current_tick = max(target_tick, _step_toward(current_tick, target_tick))
+                        changed = True
+                    if target_sched < current_sched:
+                        current_sched = max(target_sched, _step_toward(current_sched, target_sched))
+                        changed = True
+                    if target_heartbeat < current_heartbeat:
+                        current_heartbeat = max(target_heartbeat, int(_step_toward(current_heartbeat, target_heartbeat)))
+                        changed = True
+
+        current_budget = int(_clamp(current_budget, 1, max(1, int(AETHER_TASK_BUDGET_MAX))))
+        current_tick = float(_clamp(current_tick, WORKER_TICK_MIN_SEC, WORKER_TICK_MAX_SEC))
+        current_sched = float(_clamp(current_sched, SCHED_SLEEP_MIN_SEC, SCHED_SLEEP_MAX_SEC))
+        current_heartbeat = int(_clamp(current_heartbeat, HEARTBEAT_INTERVAL_MIN_SEC, HEARTBEAT_INTERVAL_MAX_SEC))
+
+        if changed or mode != THROTTLE_STATE.get("mode"):
+            THROTTLE_STATE["last_change"] = safe_now()
+            THROTTLE_STATE["last_change_ts"] = now_ts
+            event_type = "THROTTLE_DOWN" if mode in {"throttled", "burst"} else "THROTTLE_UP"
+            log_event(
+                event_type,
+                {
+                    "mode": mode,
+                    "score": round(score, 3),
+                    "effective_budget": current_budget,
+                    "effective_sched_sleep_sec": current_sched,
+                    "effective_tick_sec": current_tick,
+                    "effective_heartbeat_interval": current_heartbeat,
+                    "reasons": reasons,
+                },
+            )
+            changed = True
+
+        if (now_ts - last_state_log_ts) >= THROTTLE_STATE_LOG_SEC:
+            THROTTLE_STATE["last_state_log_ts"] = now_ts
+            log_event(
+                "THROTTLE_STATE",
+                {
+                    "mode": mode,
+                    "score": round(score, 3),
+                    "effective_budget": current_budget,
+                    "effective_sched_sleep_sec": current_sched,
+                    "effective_tick_sec": current_tick,
+                    "effective_heartbeat_interval": current_heartbeat,
+                    "reasons": reasons,
+                },
+            )
+
+        THROTTLE_STATE.update(
+            {
+                "score": round(score, 3),
+                "mode": mode,
+                "effective_budget": current_budget,
+                "effective_tick_sec": current_tick,
+                "effective_sched_sleep_sec": current_sched,
+                "effective_heartbeat_interval": current_heartbeat,
+                "stable_since_ts": stable_since_ts,
+                "cooldown_until_ts": cooldown_until,
+                "reasons": reasons,
+            }
+        )
+        return dict(THROTTLE_STATE)
+
 def task_worker() -> None:
     while not STOP_EVENT.is_set():
         try:
@@ -1612,7 +1862,8 @@ def task_worker() -> None:
                 time.sleep(1.0)
                 continue
 
-            budget = max(1, int(AETHER_TASK_BUDGET))
+            throttle = update_throttle_state()
+            budget = max(1, int(throttle.get("effective_budget", AETHER_TASK_BUDGET)))
             processed = 0
 
             while processed < budget and not TASK_QUEUE.empty():
@@ -1631,7 +1882,8 @@ def task_worker() -> None:
                     save_json_atomic(STATE_FILE, AETHER_STATE)
 
             update_dashboard()
-            time.sleep(0.25)
+            tick_sleep = float(throttle.get("effective_tick_sec", BASE_WORKER_TICK_SEC))
+            time.sleep(max(WORKER_TICK_MIN_SEC, tick_sleep))
         except Exception as e:
             log_event("WORKER_ERROR", {"error": str(e)})
             time.sleep(1.0)
@@ -1646,6 +1898,8 @@ def scheduler_loop() -> None:
             if is_frozen():
                 time.sleep(1.0)
                 continue
+            throttle = update_throttle_state()
+            heartbeat_interval = int(throttle.get("effective_heartbeat_interval", HEARTBEAT_INTERVAL_SEC))
 
             # heartbeat enqueue
             if AETHER_HEARTBEAT_ENABLED:
@@ -1653,7 +1907,7 @@ def scheduler_loop() -> None:
                 with state_lock:
                     last_ts = AETHER_STATE.get("last_heartbeat_ts")
                     energy = int(AETHER_STATE.get("energy", 0))
-                interval_ok = last_ts is None or (now_ts - float(last_ts)) >= HEARTBEAT_INTERVAL_SEC
+                interval_ok = last_ts is None or (now_ts - float(last_ts)) >= heartbeat_interval
                 if interval_ok and energy >= HEARTBEAT_MIN_ENERGY and not tasks_queue_contains(HEARTBEAT_CMD):
                     r = enqueue_task(HEARTBEAT_CMD, priority=10, source="internal", task_type="read_only")
                     if isinstance(r, dict) and r.get("ok"):
@@ -1667,7 +1921,8 @@ def scheduler_loop() -> None:
                 save_json_atomic(STATE_FILE, AETHER_STATE)
 
             update_dashboard()
-            time.sleep(2.0)
+            sched_sleep = float(throttle.get("effective_sched_sleep_sec", BASE_SCHED_SLEEP_SEC))
+            time.sleep(max(SCHED_SLEEP_MIN_SEC, sched_sleep))
         except Exception as e:
             log_event("SCHEDULER_ERROR", {"error": str(e)})
             time.sleep(2.0)
@@ -1861,6 +2116,15 @@ def ui_status() -> str:
             "last_update": STRATEGIC_MEMORY.get("last_update"),
             "history_len": len(hist) if isinstance(hist, list) else 0,
         }
+    with throttle_lock:
+        throttle_snapshot = {
+            "score": THROTTLE_STATE.get("score"),
+            "mode": THROTTLE_STATE.get("mode"),
+            "effective_budget": THROTTLE_STATE.get("effective_budget"),
+            "effective_sched_sleep_sec": THROTTLE_STATE.get("effective_sched_sleep_sec"),
+            "last_change": THROTTLE_STATE.get("last_change"),
+            "reasons": THROTTLE_STATE.get("reasons"),
+        }
     return json.dumps(
         {
             "state": s,
@@ -1877,6 +2141,7 @@ def ui_status() -> str:
                 "watchdog_sec": int(AETHER_WATCHDOG_SEC),
                 "watchdog_grace_sec": int(AETHER_WATCHDOG_GRACE_SEC),
             },
+            "throttle": throttle_snapshot,
             "orchestrator_policy": ORCHESTRATOR_POLICY,
             "projects_count": len(AETHER_PROJECTS),
             "tasks_count": len(AETHER_TASKS),
