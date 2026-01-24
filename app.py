@@ -138,6 +138,7 @@ _SIGNATURE_WARNED = False
 TRUST_ZONES = {"UI", "CHAT", "INTERNAL", "ORCH"}
 TRUST_ZONE_DEFAULT = "CHAT"
 TRUST_ZONE_BLOCK_WINDOW = 50
+OWNER_ONLY_SPECIALS = {"reload_plugins", "snapshot_create", "snapshot_export", "snapshot_import", "snapshot_restore"}
 
 # Policy matrix (explicit allowlist, default deny).
 # How to test (manual):
@@ -198,6 +199,35 @@ def _detect_special_commands(command: str) -> List[str]:
     if "replica import" in cmd:
         specials.add("replica_import")
     return sorted(specials)
+
+def _parse_owner_prefix(text: str) -> Tuple[bool, str, bool]:
+    owner_key = os.environ.get("AETHER_OWNER_KEY", "").strip()
+    raw = (text or "")
+    if not raw.startswith("owner:"):
+        return False, text, False
+    remainder = raw[len("owner:") :]
+    if " " in remainder:
+        key, rest = remainder.split(" ", 1)
+    else:
+        key, rest = remainder, ""
+    key = key.strip()
+    rest = rest.lstrip()
+    if not owner_key or key != owner_key:
+        return False, rest, True
+    return True, rest, True
+
+def _owner_only_gate(command: str) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+    is_owner, stripped, had_prefix = _parse_owner_prefix(command)
+    inspect_command = stripped if had_prefix else command
+    specials = _detect_special_commands(inspect_command)
+    needs_owner = any(special in OWNER_ONLY_SPECIALS for special in specials)
+    if not needs_owner:
+        if is_owner and had_prefix:
+            return True, stripped, None
+        return True, command, None
+    if not is_owner:
+        return False, command, {"ok": False, "error": "owner-only: blocked", "hint": "use owner:<KEY> <cmd>"}
+    return True, stripped, None
 
 def _trust_zone_allowed(zone: str, task_type: str, command: str) -> Tuple[bool, str, List[str]]:
     if zone not in TRUST_ZONES:
@@ -974,6 +1004,15 @@ def enqueue_task(
     command = (command or "").strip()
     if not command:
         return {"ok": False, "error": "empty_command"}
+
+    allowed_owner, owner_command, owner_block = _owner_only_gate(command)
+    if not allowed_owner:
+        log_event(
+            "OWNER_ONLY_BLOCK_ENQUEUE",
+            {"command": command, "source": source, "origin": origin, "reason": "owner_only"},
+        )
+        return owner_block
+    command = owner_command
 
     zone = resolve_zone(source, origin)
     blocked_zones_in_safe = {"CHAT"}
@@ -2067,6 +2106,15 @@ def run_now(
     task_type_override: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     command = (command or "").strip()
+    allowed_owner, owner_command, owner_block = _owner_only_gate(command)
+    if not allowed_owner:
+        log_event(
+            "OWNER_ONLY_BLOCK_EXEC",
+            {"command": command, "source": source, "origin": origin, "reason": "owner_only"},
+        )
+        update_dashboard()
+        return {"mode": "blocked"}, {"success": False, "error": owner_block.get("error"), "hint": owner_block.get("hint")}
+    command = owner_command
     zone = resolve_zone(source, origin)
     inferred_type = (task_type_override or "").strip() or _infer_task_type(command, source)
     stability = evaluate_stability()
