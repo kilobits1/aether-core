@@ -1124,13 +1124,31 @@ def _any_module_can_handle(command: str) -> bool:
             continue
     return False
 
+def _read_plugin_state() -> Dict[str, Any]:
+    # STATE PLUMBING: read-only best-effort state for plugins, safe fallback to {} on failure.
+    data_dir = os.environ.get("AETHER_DATA_DIR", "/tmp/aether")
+    candidates = (
+        os.path.join(data_dir, "aether_state.json"),
+        os.path.join(data_dir, "dashboard.json"),
+        os.path.join(data_dir, "status.json"),
+    )
+    for path in candidates:
+        payload = load_json(path, None)
+        if isinstance(payload, dict) and payload:
+            return payload
+    return {}
+
 def execute_ai_module(command: str) -> Dict[str, Any]:
     with modules_lock:
         items = list(LOADED_MODULES.items())
     for name, mod in items:
         try:
             if mod.can_handle(command):
-                return {"success": True, "module": name, "result": mod.run(command)}
+                st = _read_plugin_state()
+                try:
+                    return {"success": True, "module": name, "result": mod.run(command, state=st)}
+                except TypeError:
+                    return {"success": True, "module": name, "result": mod.run(command)}
         except Exception as e:
             log_event("MODULE_RUN_ERROR", {"module": name, "error": str(e)})
             return {"success": False, "error": f"{name}: {e}"}
