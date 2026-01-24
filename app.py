@@ -1126,9 +1126,50 @@ def _any_module_can_handle(command: str) -> bool:
 
 def _read_plugin_state() -> Dict[str, Any]:
     # STATE PLUMBING: read-only best-effort state for plugins, safe fallback to {} on failure.
+    def _inject_v40_observability(state_obj: Dict[str, Any]) -> None:
+        # v40 observability injection (read-only)
+        try:
+            if not isinstance(state_obj, dict):
+                return
+            if "allowed_shell_cmds" not in state_obj:
+                allowed_shell_cmds = []
+                try:
+                    adapters_obj = globals().get("adapters")
+                    if adapters_obj is not None:
+                        allowed_shell_cmds = getattr(adapters_obj, "allowed_shell_cmds", []) or []
+                except Exception:
+                    allowed_shell_cmds = []
+                state_obj["allowed_shell_cmds"] = allowed_shell_cmds
+            if "allowed_http_domains" not in state_obj:
+                allowed_http_domains = []
+                try:
+                    adapters_obj = globals().get("adapters")
+                    if adapters_obj is not None:
+                        allowed_http_domains = getattr(adapters_obj, "allowed_http_domains", []) or []
+                except Exception:
+                    allowed_http_domains = []
+                state_obj["allowed_http_domains"] = allowed_http_domains
+            if "watchdog" not in state_obj:
+                watchdog_payload = {"last_cycle": state_obj.get("last_cycle")}
+                try:
+                    watchdog_sec = globals().get("AETHER_WATCHDOG_SEC")
+                    watchdog_grace_sec = globals().get("AETHER_WATCHDOG_GRACE_SEC")
+                    if watchdog_sec is not None:
+                        watchdog_payload["watchdog_sec"] = int(watchdog_sec)
+                    if watchdog_grace_sec is not None:
+                        watchdog_payload["watchdog_grace_sec"] = int(watchdog_grace_sec)
+                except Exception:
+                    pass
+                state_obj["watchdog"] = watchdog_payload
+            if "throttle" not in state_obj:
+                state_obj["throttle"] = {"mode": "normal", "score": None, "reasons": []}
+        except Exception:
+            pass
+
     try:
         with state_lock:
             state_snapshot = dict(AETHER_STATE)
+        _inject_v40_observability(state_snapshot)
         with modules_lock:
             mods = list(LOADED_MODULES.keys())
         with strategic_lock:
@@ -1171,7 +1212,11 @@ def _read_plugin_state() -> Dict[str, Any]:
         payload = load_json(path, None)
         if isinstance(payload, dict) and payload:
             if "state" in payload:
+                state_payload = payload.get("state")
+                if isinstance(state_payload, dict):
+                    _inject_v40_observability(state_payload)
                 return payload
+            _inject_v40_observability(payload)
             return {"state": payload}
     return {}
 
