@@ -9,7 +9,8 @@ def can_handle(command: str) -> bool:
 
 def _state_view(root: Any) -> Dict[str, Any]:
     if isinstance(root, dict):
-        return root.get("state", root)
+        st = root.get("state", root)
+        return st if isinstance(st, dict) else {}
     return {}
 
 
