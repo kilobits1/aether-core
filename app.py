@@ -72,6 +72,7 @@ os.makedirs(MODULES_DIR, exist_ok=True)
 
 SNAPSHOT_DIR = os.path.join(DATA_DIR, "snapshots")
 os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+SNAPSHOT_INDEX_FILE = os.path.join(SNAPSHOT_DIR, "index.json")
 
 # -----------------------------
 # VERSION + FILES
@@ -1145,11 +1146,107 @@ def _snapshot_path(name: str) -> str:
         safe = "snapshot"
     return os.path.join(SNAPSHOT_DIR, f"{safe}.json")
 
-def snapshot_list() -> List[str]:
+def _snapshot_entry_from_payload(payload: Dict[str, Any], fallback_name: str) -> Optional[Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return None
+    name = (payload.get("name") or fallback_name or "").strip()
+    if not name:
+        return None
+    ts = payload.get("created_at") or payload.get("ts")
+    version = payload.get("version") or payload.get("app_version")
+    checksum = payload.get("checksum_sha256") or payload.get("checksum")
+    entry: Dict[str, Any] = {"name": name, "ts": ts, "version": version}
+    if checksum:
+        entry["checksum"] = checksum
+    return entry
+
+def _snapshot_index_payload(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "format": "aether-snapshot-index-v1",
+        "updated_at": safe_now(),
+        "snapshots": entries,
+    }
+
+def _snapshot_index_entries(payload: Any) -> List[Dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    raw = payload.get("snapshots")
+    if not isinstance(raw, list):
+        return []
+    entries = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        name = (item.get("name") or "").strip()
+        if not name:
+            continue
+        entry: Dict[str, Any] = {"name": name, "ts": item.get("ts"), "version": item.get("version")}
+        if item.get("checksum"):
+            entry["checksum"] = item.get("checksum")
+        entries.append(entry)
+    return entries
+
+def _rebuild_snapshot_index() -> List[Dict[str, Any]]:
+    entries: List[Dict[str, Any]] = []
     try:
         files = [f for f in os.listdir(SNAPSHOT_DIR) if f.endswith(".json")]
         files.sort()
-        return [f[:-5] for f in files]
+    except Exception:
+        files = []
+    for fn in files:
+        if fn == os.path.basename(SNAPSHOT_INDEX_FILE):
+            continue
+        name = fn[:-5]
+        payload = load_json(os.path.join(SNAPSHOT_DIR, fn), None)
+        entry = _snapshot_entry_from_payload(payload, name)
+        if entry is None:
+            try:
+                mtime = os.path.getmtime(os.path.join(SNAPSHOT_DIR, fn))
+                entry = {"name": name, "ts": datetime.fromtimestamp(mtime, timezone.utc).isoformat(), "version": None}
+            except Exception:
+                entry = {"name": name, "ts": None, "version": None}
+        entries.append(entry)
+    entries.sort(key=lambda item: item.get("name") or "")
+    save_json_atomic(SNAPSHOT_INDEX_FILE, _snapshot_index_payload(entries))
+    return entries
+
+def _load_snapshot_index() -> List[Dict[str, Any]]:
+    payload = load_json(SNAPSHOT_INDEX_FILE, None)
+    entries = _snapshot_index_entries(payload)
+    if not entries:
+        return _rebuild_snapshot_index()
+    valid = []
+    for entry in entries:
+        name = entry.get("name")
+        if not name:
+            continue
+        if os.path.exists(_snapshot_path(name)):
+            valid.append(entry)
+    if len(valid) != len(entries):
+        save_json_atomic(SNAPSHOT_INDEX_FILE, _snapshot_index_payload(valid))
+    return valid
+
+def _update_snapshot_index(name: str, payload: Dict[str, Any]) -> None:
+    entries = _load_snapshot_index()
+    entry = _snapshot_entry_from_payload(payload, name)
+    if entry is None:
+        return
+    updated = False
+    for idx, existing in enumerate(entries):
+        if existing.get("name") == entry.get("name"):
+            entries[idx] = entry
+            updated = True
+            break
+    if not updated:
+        entries.append(entry)
+    entries.sort(key=lambda item: item.get("name") or "")
+    save_json_atomic(SNAPSHOT_INDEX_FILE, _snapshot_index_payload(entries))
+
+def snapshot_list() -> List[str]:
+    try:
+        entries = _load_snapshot_index()
+        return [item.get("name") for item in entries if item.get("name")]
     except Exception:
         return []
 
@@ -1225,6 +1322,7 @@ def snapshot_create(name: str = "demo1") -> Dict[str, Any]:
 
     ok = save_json_atomic(path, payload)
     if ok:
+        _update_snapshot_index(name, payload)
         log_event("SNAPSHOT_CREATED", {"name": name, "file": path, "plugins": len(payload["plugins"]["files"])})
         update_dashboard()
         return {"ok": True, "name": name, "file": path}
@@ -1233,10 +1331,32 @@ def snapshot_create(name: str = "demo1") -> Dict[str, Any]:
 
 def snapshot_restore(name: str = "demo1") -> Dict[str, Any]:
     name = (name or "demo1").strip()
-    path = _snapshot_path(name)
+    entries = _load_snapshot_index()
+    entry = next((item for item in entries if item.get("name") == name), None)
+    path = _snapshot_path(entry.get("name") if entry else name)
     payload = load_json(path, None)
     if not payload or not isinstance(payload, dict) or not payload.get("ok"):
-        return {"ok": False, "error": "snapshot_missing_or_invalid", "file": path}
+        fallback_path = _snapshot_path(name)
+        if fallback_path != path:
+            payload = load_json(fallback_path, None)
+            if payload and isinstance(payload, dict) and payload.get("ok"):
+                path = fallback_path
+            else:
+                available = [item.get("name") for item in entries if item.get("name")]
+                return {
+                    "ok": False,
+                    "error": "snapshot_missing_or_invalid",
+                    "file": fallback_path,
+                    "available": available,
+                }
+        else:
+            available = [item.get("name") for item in entries if item.get("name")]
+            return {
+                "ok": False,
+                "error": "snapshot_missing_or_invalid",
+                "file": path,
+                "available": available,
+            }
 
     files = payload.get("files", {}) if isinstance(payload, dict) else {}
     st = files.get("state", dict(DEFAULT_STATE))
@@ -1302,10 +1422,21 @@ def snapshot_restore(name: str = "demo1") -> Dict[str, Any]:
 
 def snapshot_export(name: str = "demo1") -> str:
     name = (name or "demo1").strip()
-    path = _snapshot_path(name)
+    entries = _load_snapshot_index()
+    entry = next((item for item in entries if item.get("name") == name), None)
+    path = _snapshot_path(entry.get("name") if entry else name)
     payload = load_json(path, None)
     if not payload:
-        return json.dumps({"ok": False, "error": "snapshot_not_found", "name": name}, indent=2, ensure_ascii=False)
+        fallback_path = _snapshot_path(name)
+        if fallback_path != path:
+            payload = load_json(fallback_path, None)
+        if not payload:
+            available = [item.get("name") for item in entries if item.get("name")]
+            return json.dumps(
+                {"ok": False, "error": "snapshot_not_found", "name": name, "available": available},
+                indent=2,
+                ensure_ascii=False,
+            )
     return json.dumps(payload, indent=2, ensure_ascii=False)
 
 def snapshot_import(json_text: str) -> Dict[str, Any]:
@@ -1314,9 +1445,12 @@ def snapshot_import(json_text: str) -> Dict[str, Any]:
         if not isinstance(payload, dict) or not payload.get("ok"):
             return {"ok": False, "error": "invalid_payload"}
         name = (payload.get("name") or "imported").strip()
+        if not payload.get("created_at"):
+            return {"ok": False, "error": "invalid_payload_missing_created_at"}
         path = _snapshot_path(name)
         ok = save_json_atomic(path, payload)
         if ok:
+            _update_snapshot_index(name, payload)
             log_event("SNAPSHOT_IMPORTED", {"name": name, "file": path})
             update_dashboard()
             return {"ok": True, "name": name, "file": path}
@@ -1427,6 +1561,7 @@ def replica_apply(payload: Dict[str, Any]) -> Dict[str, Any]:
         for sname, snap_payload in snaps.items():
             if sname and snap_payload:
                 save_json_atomic(_snapshot_path(str(sname)), snap_payload)
+        _rebuild_snapshot_index()
 
     with projects_lock:
         AETHER_PROJECTS.clear()
@@ -2666,6 +2801,7 @@ def ui_status() -> str:
     diagnosis = get_self_diagnosis()
     diagnosis_summary = _diagnosis_summary(diagnosis)
     stability = evaluate_stability()
+    snapshots = snapshot_list()
     return json.dumps(
         {
             "state": s,
@@ -2689,8 +2825,8 @@ def ui_status() -> str:
             "tasks_status": _task_status_counts(),
             "task_budget": max(1, int(AETHER_TASK_BUDGET)),
             "task_max_retries": max(0, int(AETHER_TASK_MAX_RETRIES)),
-            "demo1_exists": os.path.exists(DEMO1_FILE),
-            "snapshots": snapshot_list(),
+            "demo1_exists": "demo1" in snapshots,
+            "snapshots": snapshots,
             "trust_zone": trust_zone_summary,
             "diagnosis": diagnosis_summary,
             "stability": {
