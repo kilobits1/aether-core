@@ -1126,6 +1126,41 @@ def _any_module_can_handle(command: str) -> bool:
 
 def _read_plugin_state() -> Dict[str, Any]:
     # STATE PLUMBING: read-only best-effort state for plugins, safe fallback to {} on failure.
+    try:
+        with state_lock:
+            state_snapshot = dict(AETHER_STATE)
+        with modules_lock:
+            mods = list(LOADED_MODULES.keys())
+        with strategic_lock:
+            patterns = STRATEGIC_MEMORY.get("patterns", {})
+            failures = STRATEGIC_MEMORY.get("failures", {})
+            hist = STRATEGIC_MEMORY.get("history", [])
+            strategic = {
+                "patterns": len(patterns) if isinstance(patterns, dict) else 0,
+                "failures": len(failures) if isinstance(failures, dict) else 0,
+                "last_update": STRATEGIC_MEMORY.get("last_update"),
+                "history_len": len(hist) if isinstance(hist, list) else 0,
+            }
+        trust_zone_summary = {
+            "blocks": _summarize_trust_zone_blocks(),
+            "policy": _trust_zone_policy_snapshot(),
+        }
+        return {
+            "state": state_snapshot,
+            "queue_size": TASK_QUEUE.qsize(),
+            "memory_len": len(AETHER_MEMORY),
+            "strategic": strategic,
+            "kill_switch": KILL_SWITCH,
+            "modules": mods,
+            "data_dir": DATA_DIR,
+            "version": AETHER_VERSION,
+            "freeze": FREEZE_STATE,
+            "safe_mode": dict(SAFE_MODE),
+            "trust_zone": trust_zone_summary,
+        }
+    except Exception:
+        pass
+
     data_dir = os.environ.get("AETHER_DATA_DIR", "/tmp/aether")
     candidates = (
         os.path.join(data_dir, "aether_state.json"),
@@ -1135,7 +1170,9 @@ def _read_plugin_state() -> Dict[str, Any]:
     for path in candidates:
         payload = load_json(path, None)
         if isinstance(payload, dict) and payload:
-            return payload
+            if "state" in payload:
+                return payload
+            return {"state": payload}
     return {}
 
 def execute_ai_module(command: str) -> Dict[str, Any]:
