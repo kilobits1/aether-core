@@ -2150,6 +2150,14 @@ def run_now(
     task_type_override: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     command = (command or "").strip()
+    # NIVEL 49: guard de decisión central (tarea válida o bloqueo seguro)
+    if not command or not any(ch.isalnum() for ch in command):
+        log_event(
+            "DECISION_GUARD_BLOCK",
+            {"command": command, "source": source, "origin": origin, "reason": "invalid_or_incomplete"},
+        )
+        update_dashboard()
+        return {"mode": "blocked"}, {"success": False, "error": "invalid_task"}
     allowed_owner, owner_command, owner_block = _owner_only_gate(command)
     if not allowed_owner:
         log_event(
@@ -2723,8 +2731,15 @@ def task_worker() -> None:
 
             while processed < budget and not TASK_QUEUE.empty():
                 _, task = TASK_QUEUE.get()
+                # GUARD 47.2: anti-freeze del loop, continuar si algo falla
                 try:
-                    process_task(task)
+                    try:
+                        process_task(task)
+                    except Exception as e:
+                        try:
+                            log_event("TASK_LOOP_GUARD", {"error": str(e), "task": task.get("command")})
+                        except Exception:
+                            pass
                 finally:
                     with queue_lock:
                         QUEUE_SET.discard((task.get("command") or "").strip())
@@ -3187,8 +3202,16 @@ def chat_send(message: str, history: Any):
         history_messages.append({"role": "user", "content": message})
         history_messages.append({"role": "assistant", "content": payload})
         return history_messages, history_messages, ""
-    decision, result = run_now(message, source="chat", origin="chat_send")
-    reply = format_reply(decision, result)
+    # GUARD 47.1: blindaje total del chat para siempre responder
+    try:
+        decision, result = run_now(message, source="chat", origin="chat_send")
+        reply = format_reply(decision, result)
+    except Exception as e:
+        try:
+            log_event("CHAT_GUARD_ERROR", {"error": str(e)})
+        except Exception:
+            pass
+        reply = "⚠️ Error interno. El CORE sigue activo."
     history_messages.append({"role": "user", "content": message})
     history_messages.append({"role": "assistant", "content": reply})
     return history_messages, history_messages, ""
