@@ -3180,7 +3180,7 @@ def _normalize_history_messages(history: Any) -> List[Dict[str, str]]:
                 messages.append({"role": "assistant", "content": bot_text})
     return messages
 
-# GUARD 48: clasificación de errores y mensajes claros para el usuario
+# PATCH 46: flujo unificado de guardas 47/48 (clasificación + mensaje seguro)
 def _classify_chat_error(err: Exception) -> str:
     if isinstance(err, (ValueError, TypeError)):
         return "input"
@@ -3194,6 +3194,25 @@ def _format_chat_error(category: str) -> str:
     if category == "runtime":
         return "⚠️ Fallo durante la ejecución. Intenta de nuevo."
     return "⚠️ Error interno. El CORE sigue activo."
+
+def _run_chat_guard(message: str) -> str:
+    try:
+        decision, result = run_now(message, source="chat", origin="chat_send")
+        return format_reply(decision, result)
+    except Exception as e:
+        category = _classify_chat_error(e)
+        try:
+            log_event(
+                "CHAT_GUARD_ERROR",
+                {
+                    "error": str(e),
+                    "category": category,
+                    "traceback": traceback.format_exc(),
+                },
+            )
+        except Exception:
+            pass
+        return _format_chat_error(category)
 
 def chat_send(message: str, history: Any):
     message = (message or "").strip()
@@ -3210,24 +3229,8 @@ def chat_send(message: str, history: Any):
         history_messages.append({"role": "user", "content": message})
         history_messages.append({"role": "assistant", "content": payload})
         return history_messages, history_messages, ""
-    # GUARD 47.1: blindaje total del chat para siempre responder
-    try:
-        decision, result = run_now(message, source="chat", origin="chat_send")
-        reply = format_reply(decision, result)
-    except Exception as e:
-        try:
-            log_event(
-                "CHAT_GUARD_ERROR",
-                {
-                    "error": str(e),
-                    "category": _classify_chat_error(e),
-                    "traceback": traceback.format_exc(),
-                },
-            )
-        except Exception:
-            pass
-        # GUARD 48: mensaje corto, consistente y no congela el flujo
-        reply = _format_chat_error(_classify_chat_error(e))
+    # GUARD 47/48: flujo unificado, siempre responde y con mensaje consistente
+    reply = _run_chat_guard(message)
     history_messages.append({"role": "user", "content": message})
     history_messages.append({"role": "assistant", "content": reply})
     return history_messages, history_messages, ""
