@@ -54,12 +54,17 @@ def load_state():
         s = {
             "id": AETHER_ID,
             "version": AETHER_VERSION,
-            "status": "IDLE",
+            # NIVEL 50 — OPERATIONAL
+            "status": "OPERATIONAL",
             "energy": 100,
             "focus": "STANDBY",
             "created_at": safe_now(),
             "last_cycle": None,
         }
+        _write_json(STATE_FILE, s)
+    else:
+        # NIVEL 50 — OPERATIONAL
+        s["status"] = "OPERATIONAL"
         _write_json(STATE_FILE, s)
     return s
 
