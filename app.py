@@ -30,6 +30,7 @@ import hmac
 import threading
 import importlib.util
 import copy
+import traceback
 from queue import PriorityQueue
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple, Optional
@@ -3186,6 +3187,40 @@ def _normalize_history_messages(history: Any) -> List[Dict[str, str]]:
             if isinstance(bot_text, str):
                 messages.append({"role": "assistant", "content": bot_text})
     return messages
+
+# PATCH 46: flujo unificado de guardas 47/48 (clasificación + mensaje seguro)
+def _classify_chat_error(err: Exception) -> str:
+    if isinstance(err, (ValueError, TypeError)):
+        return "input"
+    if isinstance(err, (RuntimeError, TimeoutError)):
+        return "runtime"
+    return "system"
+
+def _format_chat_error(category: str) -> str:
+    if category == "input":
+        return "⚠️ Entrada inválida. Reformula tu solicitud."
+    if category == "runtime":
+        return "⚠️ Fallo durante la ejecución. Intenta de nuevo."
+    return "⚠️ Error interno. El CORE sigue activo."
+
+def _run_chat_guard(message: str) -> str:
+    try:
+        decision, result = run_now(message, source="chat", origin="chat_send")
+        return format_reply(decision, result)
+    except Exception as e:
+        category = _classify_chat_error(e)
+        try:
+            log_event(
+                "CHAT_GUARD_ERROR",
+                {
+                    "error": str(e),
+                    "category": category,
+                    "traceback": traceback.format_exc(),
+                },
+            )
+        except Exception:
+            pass
+        return _format_chat_error(category)
 
 def chat_send(message: str, history: Any):
     message = (message or "").strip()
