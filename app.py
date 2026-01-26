@@ -634,6 +634,18 @@ def load_json(path: str, default: Any) -> Any:
     except Exception:
         return default
 
+def safe_json_load(path: str, default: Any = None) -> Any:
+    try:
+        if not os.path.exists(path):
+            return default
+        with open(path, "r", encoding="utf-8") as f:
+            raw = f.read().strip()
+        if not raw:
+            return default
+        return json.loads(raw)
+    except Exception:
+        return default
+
 def save_json_atomic(path: str, data: Any) -> bool:
     d = os.path.dirname(path) or "."
     os.makedirs(d, exist_ok=True)
@@ -1225,6 +1237,12 @@ def _read_plugin_state() -> Dict[str, Any]:
             "blocks": _summarize_trust_zone_blocks(),
             "policy": _trust_zone_policy_snapshot(),
         }
+        watchdog_payload = state_snapshot.get("watchdog")
+        if not isinstance(watchdog_payload, dict):
+            watchdog_payload = {
+                "watchdog_sec": int(AETHER_WATCHDOG_SEC),
+                "watchdog_grace_sec": int(AETHER_WATCHDOG_GRACE_SEC),
+            }
         return {
             "state": state_snapshot,
             "queue_size": TASK_QUEUE.qsize(),
@@ -1233,10 +1251,13 @@ def _read_plugin_state() -> Dict[str, Any]:
             "kill_switch": KILL_SWITCH,
             "modules": mods,
             "data_dir": DATA_DIR,
+            "modules_dir": MODULES_DIR,
             "version": AETHER_VERSION,
             "freeze": FREEZE_STATE,
+            "watchdog": watchdog_payload,
             "safe_mode": dict(SAFE_MODE),
             "trust_zone": trust_zone_summary,
+            "recent_errors": _collect_recent_errors(),
         }
     except Exception:
         pass
@@ -1267,9 +1288,12 @@ def execute_ai_module(command: str) -> Dict[str, Any]:
             if mod.can_handle(command):
                 st = _read_plugin_state()
                 try:
-                    return {"success": True, "module": name, "result": mod.run(command, state=st)}
+                    return {"success": True, "module": name, "result": mod.run(command, ctx=st, state=st)}
                 except TypeError:
-                    return {"success": True, "module": name, "result": mod.run(command)}
+                    try:
+                        return {"success": True, "module": name, "result": mod.run(command, state=st)}
+                    except TypeError:
+                        return {"success": True, "module": name, "result": mod.run(command)}
         except Exception as e:
             log_event("MODULE_RUN_ERROR", {"module": name, "error": str(e)})
             return {"success": False, "error": f"{name}: {e}"}
