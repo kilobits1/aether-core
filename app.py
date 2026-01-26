@@ -30,6 +30,7 @@ import hmac
 import threading
 import importlib.util
 import copy
+import traceback
 from queue import PriorityQueue
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple, Optional
@@ -3179,6 +3180,21 @@ def _normalize_history_messages(history: Any) -> List[Dict[str, str]]:
                 messages.append({"role": "assistant", "content": bot_text})
     return messages
 
+# GUARD 48: clasificación de errores y mensajes claros para el usuario
+def _classify_chat_error(err: Exception) -> str:
+    if isinstance(err, (ValueError, TypeError)):
+        return "input"
+    if isinstance(err, (RuntimeError, TimeoutError)):
+        return "runtime"
+    return "system"
+
+def _format_chat_error(category: str) -> str:
+    if category == "input":
+        return "⚠️ Entrada inválida. Reformula tu solicitud."
+    if category == "runtime":
+        return "⚠️ Fallo durante la ejecución. Intenta de nuevo."
+    return "⚠️ Error interno. El CORE sigue activo."
+
 def chat_send(message: str, history: Any):
     message = (message or "").strip()
     history_messages = _normalize_history_messages(history)
@@ -3200,10 +3216,18 @@ def chat_send(message: str, history: Any):
         reply = format_reply(decision, result)
     except Exception as e:
         try:
-            log_event("CHAT_GUARD_ERROR", {"error": str(e)})
+            log_event(
+                "CHAT_GUARD_ERROR",
+                {
+                    "error": str(e),
+                    "category": _classify_chat_error(e),
+                    "traceback": traceback.format_exc(),
+                },
+            )
         except Exception:
             pass
-        reply = "⚠️ Error interno. El CORE sigue activo."
+        # GUARD 48: mensaje corto, consistente y no congela el flujo
+        reply = _format_chat_error(_classify_chat_error(e))
     history_messages.append({"role": "user", "content": message})
     history_messages.append({"role": "assistant", "content": reply})
     return history_messages, history_messages, ""
