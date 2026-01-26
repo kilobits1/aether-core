@@ -61,17 +61,23 @@ def env_bool(name: str, default: bool = False) -> bool:
 def sha256_text(s: str) -> str:
     return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
 
+ALLOW_NETWORK = (os.environ.get("AETHER_ALLOW_NETWORK", "1") == "1") and not os.environ.get(
+    "AETHER_SANDBOX_DIR"
+)
+
+def ensure_dirs() -> None:
+    os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(MODULES_DIR, exist_ok=True)
+    os.makedirs(SNAPSHOT_DIR, exist_ok=True)
+
 # -----------------------------
 # PATHS (HF-safe)
 # -----------------------------
 DATA_DIR = os.environ.get("AETHER_DATA_DIR", "/tmp/aether")
-os.makedirs(DATA_DIR, exist_ok=True)
 
 MODULES_DIR = "plugins"
-os.makedirs(MODULES_DIR, exist_ok=True)
 
 SNAPSHOT_DIR = os.path.join(DATA_DIR, "snapshots")
-os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 SNAPSHOT_INDEX_FILE = os.path.join(SNAPSHOT_DIR, "index.json")
 
 # -----------------------------
@@ -738,13 +744,12 @@ DEFAULT_STATE: Dict[str, Any] = {
     "last_heartbeat_ts": None,
 }
 
-AETHER_STATE: Dict[str, Any] = load_json(STATE_FILE, dict(DEFAULT_STATE))
-AETHER_MEMORY: List[Dict[str, Any]] = load_json(MEMORY_FILE, [])
-STRATEGIC_MEMORY: Dict[str, Any] = load_json(
-    STRATEGIC_FILE,
-    {"patterns": {}, "failures": {}, "history": [], "last_update": None},
-)
-AETHER_LOGS: List[Dict[str, Any]] = load_json(LOG_FILE, [])
+_STATE_INITIALIZED = False
+
+AETHER_STATE: Dict[str, Any] = dict(DEFAULT_STATE)
+AETHER_MEMORY: List[Dict[str, Any]] = []
+STRATEGIC_MEMORY: Dict[str, Any] = {"patterns": {}, "failures": {}, "history": [], "last_update": None}
+AETHER_LOGS: List[Dict[str, Any]] = []
 
 # -----------------------------
 # ADAPTIVE THROTTLING (v47)
@@ -794,12 +799,27 @@ THROTTLE_STATE: Dict[str, Any] = {
 }
 
 DEFAULT_PROJECTS = [{"id": "default", "name": "Default", "created_at": safe_now()}]
-AETHER_PROJECTS: List[Dict[str, Any]] = load_json(PROJECTS_FILE, [])
-AETHER_TASKS: List[Dict[str, Any]] = load_json(TASKS_FILE, [])
+AETHER_PROJECTS: List[Dict[str, Any]] = []
+AETHER_TASKS: List[Dict[str, Any]] = []
 
-if "last_heartbeat_ts" not in AETHER_STATE:
-    AETHER_STATE["last_heartbeat_ts"] = None
-    save_json_atomic(STATE_FILE, AETHER_STATE)
+def init_state() -> None:
+    global _STATE_INITIALIZED, AETHER_STATE, AETHER_MEMORY, STRATEGIC_MEMORY, AETHER_LOGS, AETHER_PROJECTS, AETHER_TASKS
+    if _STATE_INITIALIZED:
+        return
+    ensure_dirs()
+    AETHER_STATE = load_json(STATE_FILE, dict(DEFAULT_STATE))
+    AETHER_MEMORY = load_json(MEMORY_FILE, [])
+    STRATEGIC_MEMORY = load_json(
+        STRATEGIC_FILE,
+        {"patterns": {}, "failures": {}, "history": [], "last_update": None},
+    )
+    AETHER_LOGS = load_json(LOG_FILE, [])
+    AETHER_PROJECTS = load_json(PROJECTS_FILE, [])
+    AETHER_TASKS = load_json(TASKS_FILE, [])
+    if "last_heartbeat_ts" not in AETHER_STATE:
+        AETHER_STATE["last_heartbeat_ts"] = None
+        save_json_atomic(STATE_FILE, AETHER_STATE)
+    _STATE_INITIALIZED = True
 
 # -----------------------------
 # DEMO1
@@ -3191,6 +3211,7 @@ def start_aether() -> str:
         return "AETHER ya estaba iniciado."
     _STARTED = True
 
+    init_state()
     ensure_demo1()
     # Level 46: Crash Recovery Brain runs once at startup before any workers.
     crash_recovery_brain()
@@ -3343,17 +3364,29 @@ def build_ui() -> gr.Blocks:
             ticker.tick(fn=ui_tick, inputs=[logs_n], outputs=[status, logs])
     return demo
 
-demo = build_ui()
+_DEMO: Optional[gr.Blocks] = None
+
+def get_demo() -> gr.Blocks:
+    global _DEMO
+    if _DEMO is None:
+        init_state()
+        _DEMO = build_ui()
+    return _DEMO
+
+def __getattr__(name: str):
+    if name == "demo":
+        return get_demo()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # -----------------------------
 # HF ENTRYPOINT
 # -----------------------------
 
 def main() -> None:
-    allow_network = env_bool("AETHER_ALLOW_NETWORK", True)
-    if not allow_network:
+    if not ALLOW_NETWORK:
         print("AETHER_ALLOW_NETWORK=0: skipping demo.launch()")
         return
+    demo = get_demo()
     port = int(os.environ.get("PORT", "7860"))
     demo.queue()
     demo.launch(
