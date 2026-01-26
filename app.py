@@ -3240,115 +3240,128 @@ def start_aether() -> str:
 # -----------------------------
 # GRADIO UI (HF SAFE)
 # -----------------------------
-ensure_projects()
 
-with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
-    gr.Markdown("## AETHER CORE — HF SAFE")
-    gr.Markdown("Chat + cola + plugins + logs + dashboard + snapshots + replica + orchestrator (v35+v39).")
+def build_ui() -> gr.Blocks:
+    ensure_projects()
+    with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
+        gr.Markdown("## AETHER CORE — HF SAFE")
+        gr.Markdown("Chat + cola + plugins + logs + dashboard + snapshots + replica + orchestrator (v35+v39).")
 
-    boot_msg = gr.Textbox(label="Boot", lines=1)
+        boot_msg = gr.Textbox(label="Boot", lines=1)
 
-    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
-    chat_state = gr.State([])
-    user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins / plan: construir X", lines=2)
+        chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
+        chat_state = gr.State([])
+        user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins / plan: construir X", lines=2)
 
-    with gr.Row():
-        btn_send = gr.Button("Enviar (Chat)")
-        btn_reload = gr.Button("Reload Modules")
-        btn_export_demo = gr.Button("Export demo1")
-        btn_refresh_status = gr.Button("Refresh Status")
+        with gr.Row():
+            btn_send = gr.Button("Enviar (Chat)")
+            btn_reload = gr.Button("Reload Modules")
+            btn_export_demo = gr.Button("Export demo1")
+            btn_refresh_status = gr.Button("Refresh Status")
 
-    gr.Markdown("---")
-    gr.Markdown("### Cola de tareas")
-    task_cmd = gr.Textbox(label="Comando para cola", placeholder="Ej: revisar estado interno", lines=1)
-    prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (1=alta · 20=baja)")
-    btn_enqueue = gr.Button("Enqueue Task (cola)")
+        gr.Markdown("---")
+        gr.Markdown("### Cola de tareas")
+        task_cmd = gr.Textbox(label="Comando para cola", placeholder="Ej: revisar estado interno", lines=1)
+        prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (1=alta · 20=baja)")
+        btn_enqueue = gr.Button("Enqueue Task (cola)")
 
-    gr.Markdown("---")
-    gr.Markdown("### v29 — Project Orchestrator")
-    project_name = gr.Textbox(label="Nuevo proyecto", placeholder="Nombre del proyecto", lines=1)
-    btn_add_project = gr.Button("Crear proyecto")
-    project_selector = gr.Dropdown(label="Proyecto", choices=_project_choices(), value=_default_project_value())
-    task_command = gr.Textbox(label="Nueva tarea (comando)", placeholder="Ej: revisar estado interno", lines=1)
-    btn_add_task = gr.Button("Agregar tarea")
-    _initial_pid = _default_project_value() or "default"
-    _initial_tasks = _task_choices(_initial_pid)
-    _initial_task_value = _initial_tasks[0][1] if _initial_tasks else None
-    task_selector = gr.Dropdown(label="Tarea", choices=_initial_tasks, value=_initial_task_value)
-    btn_run_task = gr.Button("Run Task (policy/freeze)")
-    orchestrator_out = gr.Code(label="Orchestrator output", language="json")
+        gr.Markdown("---")
+        gr.Markdown("### v29 — Project Orchestrator")
+        project_name = gr.Textbox(label="Nuevo proyecto", placeholder="Nombre del proyecto", lines=1)
+        btn_add_project = gr.Button("Crear proyecto")
+        project_selector = gr.Dropdown(label="Proyecto", choices=_project_choices(), value=_default_project_value())
+        task_command = gr.Textbox(label="Nueva tarea (comando)", placeholder="Ej: revisar estado interno", lines=1)
+        btn_add_task = gr.Button("Agregar tarea")
+        _initial_pid = _default_project_value() or "default"
+        _initial_tasks = _task_choices(_initial_pid)
+        _initial_task_value = _initial_tasks[0][1] if _initial_tasks else None
+        task_selector = gr.Dropdown(label="Tarea", choices=_initial_tasks, value=_initial_task_value)
+        btn_run_task = gr.Button("Run Task (policy/freeze)")
+        orchestrator_out = gr.Code(label="Orchestrator output", language="json")
 
-    gr.Markdown("---")
-    status = gr.Code(label="Status JSON", language="json")
+        gr.Markdown("---")
+        status = gr.Code(label="Status JSON", language="json")
 
-    logs_n = gr.Slider(10, 200, value=50, step=10, label="Logs últimos N")
-    logs = gr.Textbox(label="Tail Logs", lines=12)
-    btn_refresh_logs = gr.Button("Refresh Logs")
+        logs_n = gr.Slider(10, 200, value=50, step=10, label="Logs últimos N")
+        logs = gr.Textbox(label="Tail Logs", lines=12)
+        btn_refresh_logs = gr.Button("Refresh Logs")
 
-    export_out = gr.Code(label="Export demo1", language="json")
+        export_out = gr.Code(label="Export demo1", language="json")
 
-    gr.Markdown("---")
-    gr.Markdown("### v28 — Snapshots (v28.3 incluye plugins)")
-    snap_name = gr.Textbox(label="Snapshot name", value="demo1", lines=1)
-    with gr.Row():
-        btn_snap_create = gr.Button("Create Snapshot")
-        btn_snap_restore = gr.Button("Restore Snapshot")
-        btn_snap_list = gr.Button("List Snapshots")
-        btn_snap_export = gr.Button("Export Snapshot")
-    snap_out = gr.Code(label="Snapshot output", language="json")
-    snap_import_txt = gr.Textbox(label="Import Snapshot JSON", lines=6)
-    btn_snap_import = gr.Button("Import Snapshot")
+        gr.Markdown("---")
+        gr.Markdown("### v28 — Snapshots (v28.3 incluye plugins)")
+        snap_name = gr.Textbox(label="Snapshot name", value="demo1", lines=1)
+        with gr.Row():
+            btn_snap_create = gr.Button("Create Snapshot")
+            btn_snap_restore = gr.Button("Restore Snapshot")
+            btn_snap_list = gr.Button("List Snapshots")
+            btn_snap_export = gr.Button("Export Snapshot")
+        snap_out = gr.Code(label="Snapshot output", language="json")
+        snap_import_txt = gr.Textbox(label="Import Snapshot JSON", lines=6)
+        btn_snap_import = gr.Button("Import Snapshot")
 
-    gr.Markdown("---")
-    gr.Markdown("### v28.2 — Réplica portable (1 JSON)")
-    replica_name = gr.Textbox(label="Replica name", value="replica", lines=1)
-    btn_replica_export = gr.Button("Export Replica (JSON)")
-    replica_out = gr.Code(label="Replica JSON", language="json")
-    replica_in = gr.Textbox(label="Import Replica JSON", lines=8)
-    btn_replica_import = gr.Button("Import Replica (apply)")
-    replica_result = gr.Code(label="Replica import result", language="json")
+        gr.Markdown("---")
+        gr.Markdown("### v28.2 — Réplica portable (1 JSON)")
+        replica_name = gr.Textbox(label="Replica name", value="replica", lines=1)
+        btn_replica_export = gr.Button("Export Replica (JSON)")
+        replica_out = gr.Code(label="Replica JSON", language="json")
+        replica_in = gr.Textbox(label="Import Replica JSON", lines=8)
+        btn_replica_import = gr.Button("Import Replica (apply)")
+        replica_result = gr.Code(label="Replica import result", language="json")
 
-    # wiring
-    btn_send.click(fn=chat_send, inputs=[user_msg, chat_state], outputs=[chat, chat_state, user_msg])
-    btn_enqueue.click(fn=ui_enqueue, inputs=[task_cmd, prio], outputs=[status, logs])
-    btn_reload.click(fn=ui_reload_modules, inputs=[], outputs=[status])
-    btn_export_demo.click(fn=export_demo1, inputs=[], outputs=[export_out])
-    btn_refresh_status.click(fn=ui_status, inputs=[], outputs=[status])
+        # wiring
+        btn_send.click(fn=chat_send, inputs=[user_msg, chat_state], outputs=[chat, chat_state, user_msg])
+        btn_enqueue.click(fn=ui_enqueue, inputs=[task_cmd, prio], outputs=[status, logs])
+        btn_reload.click(fn=ui_reload_modules, inputs=[], outputs=[status])
+        btn_export_demo.click(fn=export_demo1, inputs=[], outputs=[export_out])
+        btn_refresh_status.click(fn=ui_status, inputs=[], outputs=[status])
 
-    btn_add_project.click(fn=ui_add_project, inputs=[project_name], outputs=[orchestrator_out, project_selector])
-    project_selector.change(fn=ui_refresh_tasks, inputs=[project_selector], outputs=[task_selector])
-    btn_add_task.click(fn=ui_add_task, inputs=[project_selector, task_command], outputs=[orchestrator_out, task_selector])
-    btn_run_task.click(fn=ui_run_task, inputs=[task_selector], outputs=[orchestrator_out])
+        btn_add_project.click(fn=ui_add_project, inputs=[project_name], outputs=[orchestrator_out, project_selector])
+        project_selector.change(fn=ui_refresh_tasks, inputs=[project_selector], outputs=[task_selector])
+        btn_add_task.click(fn=ui_add_task, inputs=[project_selector, task_command], outputs=[orchestrator_out, task_selector])
+        btn_run_task.click(fn=ui_run_task, inputs=[task_selector], outputs=[orchestrator_out])
 
-    btn_refresh_logs.click(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
-    logs_n.change(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
+        btn_refresh_logs.click(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
+        logs_n.change(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
 
-    btn_snap_create.click(fn=ui_snapshot_create, inputs=[snap_name], outputs=[snap_out])
-    btn_snap_restore.click(fn=ui_snapshot_restore, inputs=[snap_name], outputs=[snap_out])
-    btn_snap_list.click(fn=ui_snapshot_list, inputs=[], outputs=[snap_out])
-    btn_snap_export.click(fn=ui_snapshot_export, inputs=[snap_name], outputs=[snap_out])
-    btn_snap_import.click(fn=ui_snapshot_import, inputs=[snap_import_txt], outputs=[snap_out])
+        btn_snap_create.click(fn=ui_snapshot_create, inputs=[snap_name], outputs=[snap_out])
+        btn_snap_restore.click(fn=ui_snapshot_restore, inputs=[snap_name], outputs=[snap_out])
+        btn_snap_list.click(fn=ui_snapshot_list, inputs=[], outputs=[snap_out])
+        btn_snap_export.click(fn=ui_snapshot_export, inputs=[snap_name], outputs=[snap_out])
+        btn_snap_import.click(fn=ui_snapshot_import, inputs=[snap_import_txt], outputs=[snap_out])
 
-    btn_replica_export.click(fn=ui_replica_export, inputs=[replica_name], outputs=[replica_out])
-    btn_replica_import.click(fn=ui_replica_import, inputs=[replica_in], outputs=[replica_result])
+        btn_replica_export.click(fn=ui_replica_export, inputs=[replica_name], outputs=[replica_out])
+        btn_replica_import.click(fn=ui_replica_import, inputs=[replica_in], outputs=[replica_result])
 
-    # boot (solo una vez)
-    demo.load(fn=start_aether, inputs=[], outputs=[boot_msg])
-    demo.load(fn=ui_status, inputs=[], outputs=[status])
-    demo.load(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
+        # boot (solo una vez)
+        demo.load(fn=start_aether, inputs=[], outputs=[boot_msg])
+        demo.load(fn=ui_status, inputs=[], outputs=[status])
+        demo.load(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
 
-    if hasattr(gr, "Timer"):
-        ticker = gr.Timer(5)
-        ticker.tick(fn=ui_tick, inputs=[logs_n], outputs=[status, logs])
+        if hasattr(gr, "Timer"):
+            ticker = gr.Timer(5)
+            ticker.tick(fn=ui_tick, inputs=[logs_n], outputs=[status, logs])
+    return demo
+
+demo = build_ui()
 
 # -----------------------------
 # HF ENTRYPOINT
 # -----------------------------
-PORT = int(os.environ.get("PORT", "7860"))
-demo.queue()
-demo.launch(
-    server_name="0.0.0.0",
-    server_port=PORT,
-    ssr_mode=False,
-    show_error=True,
-)
+
+def main() -> None:
+    allow_network = env_bool("AETHER_ALLOW_NETWORK", True)
+    if not allow_network:
+        print("AETHER_ALLOW_NETWORK=0: skipping demo.launch()")
+        return
+    port = int(os.environ.get("PORT", "7860"))
+    demo.queue()
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=port,
+        ssr_mode=False,
+        show_error=True,
+    )
+
+if __name__ == "__main__":
+    main()
