@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple, Optional
 
 import gradio as gr
+from plugins.adapters import Adapters
 
 # -----------------------------
 # TIME (timezone-aware)
@@ -1308,13 +1309,31 @@ def execute_ai_module(command: str) -> Dict[str, Any]:
         try:
             if mod.can_handle(command):
                 st = _read_plugin_state()
+                data_dir = None
+                if isinstance(st, dict):
+                    state_data_dir = st.get("data_dir")
+                    if isinstance(state_data_dir, str) and state_data_dir.strip():
+                        data_dir = state_data_dir
+                if not data_dir:
+                    env_data_dir = os.environ.get("AETHER_DATA_DIR")
+                    if isinstance(env_data_dir, str) and env_data_dir.strip():
+                        data_dir = env_data_dir
+                    else:
+                        data_dir = "/tmp/aether"
+                adapters = Adapters(
+                    base_dir=data_dir,
+                    allowed_shell_cmds=[],
+                    allowed_http_domains=[],
+                )
+                ctx = {
+                    "data_dir": data_dir,
+                    "adapters": adapters,
+                    "state": st,
+                }
                 try:
-                    return {"success": True, "module": name, "result": mod.run(command, ctx=st, state=st)}
+                    return {"success": True, "module": name, "result": mod.run(command, ctx=ctx, state=st)}
                 except TypeError:
-                    try:
-                        return {"success": True, "module": name, "result": mod.run(command, state=st)}
-                    except TypeError:
-                        return {"success": True, "module": name, "result": mod.run(command)}
+                    return {"success": True, "module": name, "result": mod.run(command, state=st)}
         except Exception as e:
             log_event("MODULE_RUN_ERROR", {"module": name, "error": str(e)})
             return {"success": False, "error": f"{name}: {e}"}
