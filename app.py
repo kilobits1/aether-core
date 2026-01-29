@@ -86,6 +86,7 @@ SNAPSHOT_INDEX_FILE = os.path.join(SNAPSHOT_DIR, "index.json")
 # VERSION + FILES
 # -----------------------------
 AETHER_VERSION = "3.10.0-hf-v39-stable"
+APP_VERSION = AETHER_VERSION
 
 STATE_FILE = os.path.join(DATA_DIR, "aether_state.json")
 MEMORY_FILE = os.path.join(DATA_DIR, "aether_memory.json")
@@ -3339,73 +3340,171 @@ def start_aether() -> str:
 # GRADIO UI (HF SAFE)
 # -----------------------------
 
+def _build_info_text(view: str) -> str:
+    return f"**Modo actual:** {view}\n\n**Versión actual:** {APP_VERSION}"
+
+def _account_status_text(account_state: Dict[str, str]) -> str:
+    status = (account_state or {}).get("status") or "Invitado"
+    username = (account_state or {}).get("username") or ""
+    if status == "Conectado" and username:
+        return f"**Estado:** {status} ({username})"
+    return f"**Estado:** {status}"
+
+def ui_set_view(view: str) -> Tuple[gr.update, gr.update, gr.update, gr.update, str, str]:
+    return (
+        gr.update(visible=view == "home"),
+        gr.update(visible=view == "builder"),
+        gr.update(visible=view == "scientific"),
+        gr.update(visible=view == "config"),
+        view,
+        _build_info_text(view),
+    )
+
+def ui_login(username: str, pin: str, account_state: Dict[str, str]) -> Tuple[Dict[str, str], str]:
+    username = (username or "").strip()
+    pin = (pin or "").strip()
+    new_state = dict(account_state or {})
+    if username and pin:
+        new_state["status"] = "Conectado"
+        new_state["username"] = username
+    else:
+        new_state["status"] = "Invitado"
+        new_state["username"] = ""
+    return new_state, _account_status_text(new_state)
+
 def build_ui() -> gr.Blocks:
     ensure_projects()
     with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
-        gr.Markdown("## AETHER CORE — HF SAFE")
-        gr.Markdown("Chat + cola + plugins + logs + dashboard + snapshots + replica + orchestrator (v35+v39).")
-
-        boot_msg = gr.Textbox(label="Boot", lines=1)
-
-        chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
-        chat_state = gr.State([])
-        user_msg = gr.Textbox(label="Escribe aquí (Chat)", placeholder="Ej: hola aether / reload plugins / plan: construir X", lines=2)
+        view_state = gr.State("home")
+        plan_state = gr.State("Free")
+        language_state = gr.State("ES")
+        account_state = gr.State({"status": "Invitado", "username": ""})
 
         with gr.Row():
-            btn_send = gr.Button("Enviar (Chat)")
-            btn_reload = gr.Button("Reload Modules")
-            btn_export_demo = gr.Button("Export demo1")
-            btn_refresh_status = gr.Button("Refresh Status")
+            gr.Markdown("")
+            with gr.Column(scale=1, min_width=220):
+                gr.Markdown(f"**Versión:** {APP_VERSION}")
+                gr.Markdown("**Plan actual:** Free")
+                btn_open_config = gr.Button("⚙️ Configuración", size="sm")
 
         gr.Markdown("---")
-        gr.Markdown("### Cola de tareas")
-        task_cmd = gr.Textbox(label="Comando para cola", placeholder="Ej: revisar estado interno", lines=1)
-        prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (1=alta · 20=baja)")
-        btn_enqueue = gr.Button("Enqueue Task (cola)")
 
-        gr.Markdown("---")
-        gr.Markdown("### v29 — Project Orchestrator")
-        project_name = gr.Textbox(label="Nuevo proyecto", placeholder="Nombre del proyecto", lines=1)
-        btn_add_project = gr.Button("Crear proyecto")
-        project_selector = gr.Dropdown(label="Proyecto", choices=_project_choices(), value=_default_project_value())
-        task_command = gr.Textbox(label="Nueva tarea (comando)", placeholder="Ej: revisar estado interno", lines=1)
-        btn_add_task = gr.Button("Agregar tarea")
-        _initial_pid = _default_project_value() or "default"
-        _initial_tasks = _task_choices(_initial_pid)
-        _initial_task_value = _initial_tasks[0][1] if _initial_tasks else None
-        task_selector = gr.Dropdown(label="Tarea", choices=_initial_tasks, value=_initial_task_value)
-        btn_run_task = gr.Button("Run Task (policy/freeze)")
-        orchestrator_out = gr.Code(label="Orchestrator output", language="json")
+        with gr.Column(visible=True) as home_view:
+            with gr.Row():
+                with gr.Column(scale=1, min_width=140):
+                    logo_btn = gr.Button("AETHER", variant="secondary")
+                with gr.Column(scale=5):
+                    gr.Markdown("### Aether — plataforma de creación y ciencia asistida")
+                    boot_msg = gr.Textbox(label="Boot", lines=1)
 
-        gr.Markdown("---")
-        status = gr.Code(label="Status JSON", language="json")
+                    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
+                    chat_state = gr.State([])
+                    user_msg = gr.Textbox(
+                        label="Escribe aquí (Chat)",
+                        placeholder="Ej: hola aether / reload plugins / plan: construir X",
+                        lines=2,
+                    )
 
-        logs_n = gr.Slider(10, 200, value=50, step=10, label="Logs últimos N")
-        logs = gr.Textbox(label="Tail Logs", lines=12)
-        btn_refresh_logs = gr.Button("Refresh Logs")
+                    with gr.Row():
+                        btn_send = gr.Button("Enviar (Chat)")
+                        btn_reload = gr.Button("Reload Modules")
+                        btn_export_demo = gr.Button("Export demo1")
+                        btn_refresh_status = gr.Button("Refresh Status")
 
-        export_out = gr.Code(label="Export demo1", language="json")
+                    with gr.Row():
+                        btn_builder = gr.Button("🛠️ Crear tu Web / App", variant="primary")
+                        btn_scientific = gr.Button("🔬 Científico", variant="primary")
 
-        gr.Markdown("---")
-        gr.Markdown("### v28 — Snapshots (v28.3 incluye plugins)")
-        snap_name = gr.Textbox(label="Snapshot name", value="demo1", lines=1)
-        with gr.Row():
-            btn_snap_create = gr.Button("Create Snapshot")
-            btn_snap_restore = gr.Button("Restore Snapshot")
-            btn_snap_list = gr.Button("List Snapshots")
-            btn_snap_export = gr.Button("Export Snapshot")
-        snap_out = gr.Code(label="Snapshot output", language="json")
-        snap_import_txt = gr.Textbox(label="Import Snapshot JSON", lines=6)
-        btn_snap_import = gr.Button("Import Snapshot")
+                    with gr.Accordion("Operaciones avanzadas", open=False):
+                        gr.Markdown("### Cola de tareas")
+                        task_cmd = gr.Textbox(label="Comando para cola", placeholder="Ej: revisar estado interno", lines=1)
+                        prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (1=alta · 20=baja)")
+                        btn_enqueue = gr.Button("Enqueue Task (cola)")
 
-        gr.Markdown("---")
-        gr.Markdown("### v28.2 — Réplica portable (1 JSON)")
-        replica_name = gr.Textbox(label="Replica name", value="replica", lines=1)
-        btn_replica_export = gr.Button("Export Replica (JSON)")
-        replica_out = gr.Code(label="Replica JSON", language="json")
-        replica_in = gr.Textbox(label="Import Replica JSON", lines=8)
-        btn_replica_import = gr.Button("Import Replica (apply)")
-        replica_result = gr.Code(label="Replica import result", language="json")
+                        gr.Markdown("---")
+                        gr.Markdown("### v29 — Project Orchestrator")
+                        project_name = gr.Textbox(label="Nuevo proyecto", placeholder="Nombre del proyecto", lines=1)
+                        btn_add_project = gr.Button("Crear proyecto")
+                        project_selector = gr.Dropdown(label="Proyecto", choices=_project_choices(), value=_default_project_value())
+                        task_command = gr.Textbox(label="Nueva tarea (comando)", placeholder="Ej: revisar estado interno", lines=1)
+                        btn_add_task = gr.Button("Agregar tarea")
+                        _initial_pid = _default_project_value() or "default"
+                        _initial_tasks = _task_choices(_initial_pid)
+                        _initial_task_value = _initial_tasks[0][1] if _initial_tasks else None
+                        task_selector = gr.Dropdown(label="Tarea", choices=_initial_tasks, value=_initial_task_value)
+                        btn_run_task = gr.Button("Run Task (policy/freeze)")
+                        orchestrator_out = gr.Code(label="Orchestrator output", language="json")
+
+                        gr.Markdown("---")
+                        status = gr.Code(label="Status JSON", language="json")
+
+                        logs_n = gr.Slider(10, 200, value=50, step=10, label="Logs últimos N")
+                        logs = gr.Textbox(label="Tail Logs", lines=12)
+                        btn_refresh_logs = gr.Button("Refresh Logs")
+
+                        export_out = gr.Code(label="Export demo1", language="json")
+
+                        gr.Markdown("---")
+                        gr.Markdown("### v28 — Snapshots (v28.3 incluye plugins)")
+                        snap_name = gr.Textbox(label="Snapshot name", value="demo1", lines=1)
+                        with gr.Row():
+                            btn_snap_create = gr.Button("Create Snapshot")
+                            btn_snap_restore = gr.Button("Restore Snapshot")
+                            btn_snap_list = gr.Button("List Snapshots")
+                            btn_snap_export = gr.Button("Export Snapshot")
+                        snap_out = gr.Code(label="Snapshot output", language="json")
+                        snap_import_txt = gr.Textbox(label="Import Snapshot JSON", lines=6)
+                        btn_snap_import = gr.Button("Import Snapshot")
+
+                        gr.Markdown("---")
+                        gr.Markdown("### v28.2 — Réplica portable (1 JSON)")
+                        replica_name = gr.Textbox(label="Replica name", value="replica", lines=1)
+                        btn_replica_export = gr.Button("Export Replica (JSON)")
+                        replica_out = gr.Code(label="Replica JSON", language="json")
+                        replica_in = gr.Textbox(label="Import Replica JSON", lines=8)
+                        btn_replica_import = gr.Button("Import Replica (apply)")
+                        replica_result = gr.Code(label="Replica import result", language="json")
+
+        with gr.Column(visible=False) as builder_view:
+            btn_home_from_builder = gr.Button("⬅️ Home")
+            gr.Markdown("## Builder")
+            gr.Markdown("Espacio reservado para el modo creador. Aquí vivirá el flujo V1 de construcción.")
+
+        with gr.Column(visible=False) as scientific_view:
+            btn_home_from_scientific = gr.Button("⬅️ Home")
+            gr.Markdown("## Científico")
+            gr.Markdown("Espacio reservado para el modo científico. Aquí vivirá el flujo V1 de investigación.")
+
+        with gr.Column(visible=False) as config_view:
+            btn_home_from_config = gr.Button("⬅️ Home")
+            gr.Markdown("## Configuración")
+
+            gr.Markdown("### Cuenta")
+            account_status = gr.Markdown(_account_status_text({"status": "Invitado", "username": ""}))
+            account_username = gr.Textbox(label="Usuario", placeholder="Tu usuario", lines=1)
+            account_pin = gr.Textbox(label="Pin / Código", placeholder="Código de acceso", type="password", lines=1)
+            btn_login = gr.Button("Login")
+
+            gr.Markdown("---")
+            gr.Markdown("### Idioma")
+            language_selector = gr.Dropdown(label="Selecciona idioma", choices=["ES", "EN"], value="ES")
+
+            gr.Markdown("---")
+            gr.Markdown("### Plan y precios")
+            gr.Markdown(
+                "**PLUS**\n\n"
+                "- $4 USD\n"
+                "- ≈ S/ 15 PEN promo → luego ≈ S/ 50 PEN regular\n\n"
+                "**PRO**\n\n"
+                "- $135 USD\n"
+                "- ≈ S/ 500 PEN promo → luego ≈ S/ 1500 PEN regular\n\n"
+                "Conversión referencial. Pago mensual."
+            )
+            btn_plan_upgrade = gr.Button("Actualizar (próximamente)")
+
+            gr.Markdown("---")
+            gr.Markdown("### Info")
+            info_md = gr.Markdown(_build_info_text("home"))
 
         # wiring
         btn_send.click(fn=chat_send, inputs=[user_msg, chat_state], outputs=[chat, chat_state, user_msg])
@@ -3430,6 +3529,45 @@ def build_ui() -> gr.Blocks:
 
         btn_replica_export.click(fn=ui_replica_export, inputs=[replica_name], outputs=[replica_out])
         btn_replica_import.click(fn=ui_replica_import, inputs=[replica_in], outputs=[replica_result])
+
+        btn_login.click(fn=ui_login, inputs=[account_username, account_pin, account_state], outputs=[account_state, account_status])
+        language_selector.change(fn=lambda lang: lang, inputs=[language_selector], outputs=[language_state])
+
+        btn_open_config.click(
+            fn=lambda: ui_set_view("config"),
+            inputs=[],
+            outputs=[home_view, builder_view, scientific_view, config_view, view_state, info_md],
+        )
+        logo_btn.click(
+            fn=lambda: ui_set_view("home"),
+            inputs=[],
+            outputs=[home_view, builder_view, scientific_view, config_view, view_state, info_md],
+        )
+        btn_builder.click(
+            fn=lambda: ui_set_view("builder"),
+            inputs=[],
+            outputs=[home_view, builder_view, scientific_view, config_view, view_state, info_md],
+        )
+        btn_scientific.click(
+            fn=lambda: ui_set_view("scientific"),
+            inputs=[],
+            outputs=[home_view, builder_view, scientific_view, config_view, view_state, info_md],
+        )
+        btn_home_from_builder.click(
+            fn=lambda: ui_set_view("home"),
+            inputs=[],
+            outputs=[home_view, builder_view, scientific_view, config_view, view_state, info_md],
+        )
+        btn_home_from_scientific.click(
+            fn=lambda: ui_set_view("home"),
+            inputs=[],
+            outputs=[home_view, builder_view, scientific_view, config_view, view_state, info_md],
+        )
+        btn_home_from_config.click(
+            fn=lambda: ui_set_view("home"),
+            inputs=[],
+            outputs=[home_view, builder_view, scientific_view, config_view, view_state, info_md],
+        )
 
         # boot (solo una vez)
         demo.load(fn=start_aether, inputs=[], outputs=[boot_msg])
