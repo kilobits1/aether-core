@@ -3508,7 +3508,14 @@ def build_ui() -> gr.Blocks:
         with gr.Column(visible=True) as home_view:
             with gr.Row():
                 with gr.Column(scale=1, min_width=80):
-                    gr.HTML("<div id='aether-logo'><img src='file=aether_logo.png' alt='Aether logo'></div>")
+                    gr.Image(
+                        value="aether_logo.png",
+                        show_label=False,
+                        interactive=False,
+                        width=52,
+                        height=52,
+                        elem_id="aether-logo",
+                    )
                 with gr.Column(scale=5):
                     boot_msg = gr.Textbox(label="Boot", lines=1, visible=False)
 
@@ -3637,15 +3644,12 @@ def build_ui() -> gr.Blocks:
 
             gr.Markdown("---")
             gr.Markdown("### Plan y precios")
-            gr.Markdown(
-                "**PLUS**\n\n"
-                "- $4 USD (promo)\n"
-                "- ≈ S/ 15 PEN → luego ≈ S/ 50 PEN\n\n"
-                "**PRO**\n\n"
-                "- $135 USD (promo)\n"
-                "- ≈ S/ 500 PEN → luego ≈ S/ 1500 PEN\n\n"
-                "Pago mensual. Conversión referencial."
-            )
+            with gr.Accordion("Planes", open=False):
+                gr.Markdown(
+                    "**Plus:** S/ 15 / mes (promo) → luego S/ 50\n\n"
+                    "**Pro:** S/ 500 / mes (promo) → luego S/ 1500\n\n"
+                    "Pagos próximamente."
+                )
             btn_plan_upgrade = gr.Button("Actualizar (próximamente)")
 
         # wiring
