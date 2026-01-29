@@ -3374,6 +3374,7 @@ def ui_login(username: str, pin: str, account_state: Dict[str, str]) -> Tuple[Di
 
 def build_ui() -> gr.Blocks:
     ensure_projects()
+    is_admin = env_bool("AETHER_IS_ADMIN", False)
     with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
         view_state = gr.State("home")
         plan_state = gr.State("Free")
@@ -3381,11 +3382,11 @@ def build_ui() -> gr.Blocks:
         account_state = gr.State({"status": "Invitado", "username": ""})
 
         with gr.Row():
-            gr.Markdown("")
-            with gr.Column(scale=1, min_width=220):
-                gr.Markdown(f"**Versión:** {APP_VERSION}")
-                gr.Markdown("**Plan actual:** Free")
-                btn_open_config = gr.Button("⚙️ Configuración", size="sm")
+            with gr.Column(scale=1, min_width=140):
+                gr.Markdown("<span style='color:#8a8a8a;font-size:12px'>v1.0</span>")
+                gr.Markdown("<span style='color:#8a8a8a;font-size:12px'>Plan: Free</span>")
+            with gr.Column(scale=1, min_width=120):
+                btn_open_config = gr.Button("⚙️ Config", size="sm")
 
         gr.Markdown("---")
 
@@ -3394,8 +3395,8 @@ def build_ui() -> gr.Blocks:
                 with gr.Column(scale=1, min_width=140):
                     logo_btn = gr.Button("AETHER", variant="secondary")
                 with gr.Column(scale=5):
-                    gr.Markdown("### Aether — plataforma de creación y ciencia asistida")
-                    boot_msg = gr.Textbox(label="Boot", lines=1)
+                    gr.Markdown("### Aether")
+                    boot_msg = gr.Textbox(label="Boot", lines=1, visible=is_admin)
 
                     chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
                     chat_state = gr.State([])
@@ -3407,15 +3408,15 @@ def build_ui() -> gr.Blocks:
 
                     with gr.Row():
                         btn_send = gr.Button("Enviar (Chat)")
-                        btn_reload = gr.Button("Reload Modules")
-                        btn_export_demo = gr.Button("Export demo1")
-                        btn_refresh_status = gr.Button("Refresh Status")
+                        btn_reload = gr.Button("Reload Modules", visible=is_admin)
+                        btn_export_demo = gr.Button("Export demo1", visible=is_admin)
+                        btn_refresh_status = gr.Button("Refresh Status", visible=is_admin)
 
                     with gr.Row():
                         btn_builder = gr.Button("🛠️ Crear tu Web / App", variant="primary")
                         btn_scientific = gr.Button("🔬 Científico", variant="primary")
 
-                    with gr.Accordion("Operaciones avanzadas", open=False):
+                    with gr.Accordion("Operaciones avanzadas", open=False, visible=is_admin):
                         gr.Markdown("### Cola de tareas")
                         task_cmd = gr.Textbox(label="Comando para cola", placeholder="Ej: revisar estado interno", lines=1)
                         prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (1=alta · 20=baja)")
