@@ -3340,83 +3340,130 @@ def start_aether() -> str:
 # GRADIO UI (HF SAFE)
 # -----------------------------
 
-def _build_info_text(view: str) -> str:
-    return f"**Modo actual:** {view}\n\n**Versión actual:** {APP_VERSION}"
-
 def _account_status_text(account_state: Dict[str, str]) -> str:
     status = (account_state or {}).get("status") or "Invitado"
     username = (account_state or {}).get("username") or ""
-    if status == "Conectado" and username:
+    if status == "Admin" and username:
         return f"**Estado:** {status} ({username})"
     return f"**Estado:** {status}"
 
-def ui_set_view(view: str) -> Tuple[gr.update, gr.update, gr.update, gr.update, str, str]:
+def _admin_env() -> Tuple[bool, str, str]:
+    pin = os.environ.get("AETHER_ADMIN_PIN", "").strip()
+    user = os.environ.get("AETHER_ADMIN_USER", "").strip()
+    return bool(pin), user, pin
+
+def _admin_visibility_updates(is_admin: bool) -> Tuple[gr.update, gr.update, gr.update, gr.update, gr.update]:
+    return (
+        gr.update(visible=is_admin),
+        gr.update(visible=is_admin),
+        gr.update(visible=is_admin),
+        gr.update(visible=is_admin),
+        gr.update(visible=is_admin),
+    )
+
+def ui_set_view(view: str) -> Tuple[gr.update, gr.update, gr.update, gr.update, str]:
     return (
         gr.update(visible=view == "home"),
         gr.update(visible=view == "builder"),
         gr.update(visible=view == "scientific"),
         gr.update(visible=view == "config"),
         view,
-        _build_info_text(view),
     )
 
-def ui_login(username: str, pin: str, account_state: Dict[str, str]) -> Tuple[Dict[str, str], str]:
+def ui_login(
+    username: str, pin: str, account_state: Dict[str, str]
+) -> Tuple[bool, Dict[str, str], str, gr.update, gr.update, gr.update, gr.update, gr.update]:
     username = (username or "").strip()
     pin = (pin or "").strip()
+    admin_enabled, required_user, admin_pin = _admin_env()
+    is_admin = False
     new_state = dict(account_state or {})
-    if username and pin:
-        new_state["status"] = "Conectado"
-        new_state["username"] = username
+    if admin_enabled and pin and hmac.compare_digest(pin, admin_pin):
+        if required_user and username != required_user:
+            is_admin = False
+        else:
+            is_admin = True
+    if is_admin:
+        new_state["status"] = "Admin"
+        new_state["username"] = username or (required_user or "admin")
     else:
         new_state["status"] = "Invitado"
         new_state["username"] = ""
-    return new_state, _account_status_text(new_state)
+    return (is_admin, new_state, _account_status_text(new_state), *_admin_visibility_updates(is_admin))
+
+def ui_logout(
+    account_state: Dict[str, str]
+) -> Tuple[bool, Dict[str, str], str, gr.update, gr.update, gr.update, gr.update, gr.update]:
+    new_state = dict(account_state or {})
+    new_state["status"] = "Invitado"
+    new_state["username"] = ""
+    return (False, new_state, _account_status_text(new_state), *_admin_visibility_updates(False))
 
 def build_ui() -> gr.Blocks:
     ensure_projects()
-    is_admin = env_bool("AETHER_IS_ADMIN", False)
-    with gr.Blocks(title="AETHER CORE — HF SAFE") as demo:
+    with gr.Blocks(
+        title="AETHER CORE — HF SAFE",
+        css="""
+        #aether-header small { color: #8a8a8a; font-size: 12px; }
+        #aether-logo-btn button {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            border: none;
+            box-shadow: none;
+            background-color: transparent;
+            background-image: url("file=aether_logo.png");
+            background-size: cover;
+            background-position: center;
+            padding: 0;
+        }
+        #aether-logo-btn button:hover { filter: brightness(0.95); }
+        """,
+    ) as demo:
         view_state = gr.State("home")
-        plan_state = gr.State("Free")
         language_state = gr.State("ES")
         account_state = gr.State({"status": "Invitado", "username": ""})
+        is_admin_state = gr.State(False)
 
         with gr.Row():
-            with gr.Column(scale=1, min_width=140):
-                gr.Markdown("<span style='color:#8a8a8a;font-size:12px'>v1.0</span>")
-                gr.Markdown("<span style='color:#8a8a8a;font-size:12px'>Plan: Free</span>")
+            with gr.Column(scale=1, min_width=160):
+                gr.HTML(
+                    "<div id='aether-header'>"
+                    "<small>v1.0</small><br/>"
+                    "<small>Plan: Free / Plus / Pro</small>"
+                    "</div>"
+                )
             with gr.Column(scale=1, min_width=120):
-                btn_open_config = gr.Button("⚙️ Config", size="sm")
+                btn_open_config = gr.Button("⚙️", size="sm")
 
         gr.Markdown("---")
 
         with gr.Column(visible=True) as home_view:
             with gr.Row():
-                with gr.Column(scale=1, min_width=140):
-                    logo_btn = gr.Button("AETHER", variant="secondary")
+                with gr.Column(scale=1, min_width=100):
+                    logo_btn = gr.Button("", elem_id="aether-logo-btn")
                 with gr.Column(scale=5):
-                    gr.Markdown("### Aether")
-                    boot_msg = gr.Textbox(label="Boot", lines=1, visible=is_admin)
+                    boot_msg = gr.Textbox(label="Boot", lines=1, visible=False)
 
                     chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
                     chat_state = gr.State([])
                     user_msg = gr.Textbox(
-                        label="Escribe aquí (Chat)",
-                        placeholder="Ej: hola aether / reload plugins / plan: construir X",
+                        label="Mensaje",
+                        placeholder="Describe lo que quieres hacer...",
                         lines=2,
                     )
 
                     with gr.Row():
                         btn_send = gr.Button("Enviar (Chat)")
-                        btn_reload = gr.Button("Reload Modules", visible=is_admin)
-                        btn_export_demo = gr.Button("Export demo1", visible=is_admin)
-                        btn_refresh_status = gr.Button("Refresh Status", visible=is_admin)
+                        btn_reload = gr.Button("Reload Modules", visible=False)
+                        btn_export_demo = gr.Button("Export demo1", visible=False)
+                        btn_refresh_status = gr.Button("Refresh Status", visible=False)
 
                     with gr.Row():
                         btn_builder = gr.Button("🛠️ Crear tu Web / App", variant="primary")
                         btn_scientific = gr.Button("🔬 Científico", variant="primary")
 
-                    with gr.Accordion("Operaciones avanzadas", open=False, visible=is_admin):
+                    with gr.Accordion("Operaciones avanzadas (Admin)", open=False, visible=False) as admin_ops:
                         gr.Markdown("### Cola de tareas")
                         task_cmd = gr.Textbox(label="Comando para cola", placeholder="Ej: revisar estado interno", lines=1)
                         prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (1=alta · 20=baja)")
@@ -3469,12 +3516,12 @@ def build_ui() -> gr.Blocks:
         with gr.Column(visible=False) as builder_view:
             btn_home_from_builder = gr.Button("⬅️ Home")
             gr.Markdown("## Builder")
-            gr.Markdown("Espacio reservado para el modo creador. Aquí vivirá el flujo V1 de construcción.")
+            gr.Markdown("Modo creador.")
 
         with gr.Column(visible=False) as scientific_view:
             btn_home_from_scientific = gr.Button("⬅️ Home")
             gr.Markdown("## Científico")
-            gr.Markdown("Espacio reservado para el modo científico. Aquí vivirá el flujo V1 de investigación.")
+            gr.Markdown("Modo científico.")
 
         with gr.Column(visible=False) as config_view:
             btn_home_from_config = gr.Button("⬅️ Home")
@@ -3485,27 +3532,24 @@ def build_ui() -> gr.Blocks:
             account_username = gr.Textbox(label="Usuario", placeholder="Tu usuario", lines=1)
             account_pin = gr.Textbox(label="Pin / Código", placeholder="Código de acceso", type="password", lines=1)
             btn_login = gr.Button("Login")
+            btn_logout = gr.Button("Cerrar sesión")
 
             gr.Markdown("---")
             gr.Markdown("### Idioma")
-            language_selector = gr.Dropdown(label="Selecciona idioma", choices=["ES", "EN"], value="ES")
+            language_selector = gr.Dropdown(label="Selecciona idioma", choices=["ES", "EN", "PT-BR"], value="ES")
 
             gr.Markdown("---")
             gr.Markdown("### Plan y precios")
             gr.Markdown(
                 "**PLUS**\n\n"
-                "- $4 USD\n"
-                "- ≈ S/ 15 PEN promo → luego ≈ S/ 50 PEN regular\n\n"
+                "- $4 USD (promo)\n"
+                "- ≈ S/ 15 PEN → luego ≈ S/ 50 PEN\n\n"
                 "**PRO**\n\n"
-                "- $135 USD\n"
-                "- ≈ S/ 500 PEN promo → luego ≈ S/ 1500 PEN regular\n\n"
-                "Conversión referencial. Pago mensual."
+                "- $135 USD (promo)\n"
+                "- ≈ S/ 500 PEN → luego ≈ S/ 1500 PEN\n\n"
+                "Pago mensual. Conversión referencial."
             )
             btn_plan_upgrade = gr.Button("Actualizar (próximamente)")
-
-            gr.Markdown("---")
-            gr.Markdown("### Info")
-            info_md = gr.Markdown(_build_info_text("home"))
 
         # wiring
         btn_send.click(fn=chat_send, inputs=[user_msg, chat_state], outputs=[chat, chat_state, user_msg])
@@ -3531,43 +3575,70 @@ def build_ui() -> gr.Blocks:
         btn_replica_export.click(fn=ui_replica_export, inputs=[replica_name], outputs=[replica_out])
         btn_replica_import.click(fn=ui_replica_import, inputs=[replica_in], outputs=[replica_result])
 
-        btn_login.click(fn=ui_login, inputs=[account_username, account_pin, account_state], outputs=[account_state, account_status])
+        btn_login.click(
+            fn=ui_login,
+            inputs=[account_username, account_pin, account_state],
+            outputs=[
+                is_admin_state,
+                account_state,
+                account_status,
+                boot_msg,
+                btn_reload,
+                btn_export_demo,
+                btn_refresh_status,
+                admin_ops,
+            ],
+        )
+        btn_logout.click(
+            fn=ui_logout,
+            inputs=[account_state],
+            outputs=[
+                is_admin_state,
+                account_state,
+                account_status,
+                boot_msg,
+                btn_reload,
+                btn_export_demo,
+                btn_refresh_status,
+                admin_ops,
+            ],
+        )
         language_selector.change(fn=lambda lang: lang, inputs=[language_selector], outputs=[language_state])
 
         btn_open_config.click(
             fn=lambda: ui_set_view("config"),
             inputs=[],
-            outputs=[home_view, builder_view, scientific_view, config_view, view_state, info_md],
+            outputs=[home_view, builder_view, scientific_view, config_view, view_state],
         )
         logo_btn.click(
             fn=lambda: ui_set_view("home"),
             inputs=[],
-            outputs=[home_view, builder_view, scientific_view, config_view, view_state, info_md],
+            outputs=[home_view, builder_view, scientific_view, config_view, view_state],
         )
         btn_builder.click(
             fn=lambda: ui_set_view("builder"),
             inputs=[],
-            outputs=[home_view, builder_view, scientific_view, config_view, view_state, info_md],
+            outputs=[home_view, builder_view, scientific_view, config_view, view_state],
         )
         btn_scientific.click(
             fn=lambda: ui_set_view("scientific"),
             inputs=[],
-            outputs=[home_view, builder_view, scientific_view, config_view, view_state, info_md],
+            outputs=[home_view, builder_view, scientific_view, config_view, view_state],
         )
         btn_home_from_builder.click(
             fn=lambda: ui_set_view("home"),
             inputs=[],
-            outputs=[home_view, builder_view, scientific_view, config_view, view_state, info_md],
+            outputs=[home_view, builder_view, scientific_view, config_view, view_state],
         )
         btn_home_from_scientific.click(
             fn=lambda: ui_set_view("home"),
             inputs=[],
-            outputs=[home_view, builder_view, scientific_view, config_view, view_state, info_md],
+            outputs=[home_view, builder_view, scientific_view, config_view, view_state],
         )
         btn_home_from_config.click(
             fn=lambda: ui_set_view("home"),
             inputs=[],
-            outputs=[home_view, builder_view, scientific_view, config_view, view_state, info_md],
+            outputs=[home_view, builder_view, scientific_view, config_view, view_state],
         )
 
         # boot (solo una vez)
