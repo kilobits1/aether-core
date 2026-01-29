@@ -77,6 +77,7 @@ def ensure_dirs() -> None:
 # PATHS (HF-safe)
 # -----------------------------
 DATA_DIR = os.environ.get("AETHER_DATA_DIR", "/tmp/aether")
+UI_DATA_DIR = "/tmp/aether_ui"
 
 MODULES_DIR = "plugins"
 
@@ -3234,6 +3235,28 @@ def _normalize_history_messages(history: Any) -> List[Dict[str, str]]:
                 messages.append({"role": "assistant", "content": bot_text})
     return messages
 
+def load_chat(view: str) -> List[Dict[str, str]]:
+    try:
+        os.makedirs(UI_DATA_DIR, exist_ok=True)
+        path = os.path.join(UI_DATA_DIR, f"{view}_chat.json")
+        if not os.path.exists(path):
+            return []
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        return _normalize_history_messages(payload)
+    except Exception:
+        return []
+
+def save_chat(view: str, history: Any) -> None:
+    try:
+        os.makedirs(UI_DATA_DIR, exist_ok=True)
+        path = os.path.join(UI_DATA_DIR, f"{view}_chat.json")
+        payload = _normalize_history_messages(history)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+    except Exception:
+        return
+
 # PATCH 46: flujo unificado de guardas 47/48 (clasificación + mensaje seguro)
 def _classify_chat_error(err: Exception) -> str:
     if isinstance(err, (ValueError, TypeError)):
@@ -3311,6 +3334,16 @@ def ui_new_chat() -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
     empty: List[Dict[str, str]] = []
     return empty, empty
 
+def ui_new_builder_chat() -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    empty: List[Dict[str, str]] = []
+    save_chat("builder", empty)
+    return empty, empty
+
+def ui_new_scientific_chat() -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    empty: List[Dict[str, str]] = []
+    save_chat("scientific", empty)
+    return empty, empty
+
 def builder_chat_send(message: str, history: Any):
     message = (message or "").strip()
     history_messages = _normalize_history_messages(history)
@@ -3324,6 +3357,7 @@ def builder_chat_send(message: str, history: Any):
         reply = response.get("error") or "⚠️ Error al ejecutar builder."
     history_messages.append({"role": "user", "content": message})
     history_messages.append({"role": "assistant", "content": reply})
+    save_chat("builder", history_messages)
     return history_messages, history_messages, ""
 
 def scientific_chat_send(message: str, history: Any):
@@ -3339,6 +3373,7 @@ def scientific_chat_send(message: str, history: Any):
         reply = response.get("error") or "⚠️ Error al ejecutar scientific."
     history_messages.append({"role": "user", "content": message})
     history_messages.append({"role": "assistant", "content": reply})
+    save_chat("scientific", history_messages)
     return history_messages, history_messages, ""
 
 # -----------------------------
@@ -3493,13 +3528,15 @@ def build_ui() -> gr.Blocks:
         language_state = gr.State("ES")
         account_state = gr.State({"status": "Invitado", "username": ""})
         is_admin_state = gr.State(False)
+        builder_initial_history = load_chat("builder")
+        scientific_initial_history = load_chat("scientific")
 
         with gr.Row():
             with gr.Column(scale=1, min_width=160):
                 gr.HTML(
                     "<div id='aether-header'>"
                     "<div class='aether-header-line'>v1.0</div>"
-                    "<div class='aether-header-line'>Plan actual: Free</div>"
+                    "<div class='aether-header-line'>Plan actual: FREE</div>"
                     "</div>"
                 )
             with gr.Column(scale=1, min_width=120):
@@ -3603,8 +3640,10 @@ def build_ui() -> gr.Blocks:
             builder_export_file = gr.File(label="Export ZIP", interactive=False)
             with gr.Row():
                 btn_builder_export = gr.Button("Exportar")
-            builder_chat = gr.Chatbot(label="Builder Chat", height=420, value=[])
-            builder_chat_state = gr.State([])
+            with gr.Row():
+                btn_builder_new_chat = gr.Button("Nuevo chat", size="sm")
+            builder_chat = gr.Chatbot(label="Builder Chat", height=420, value=builder_initial_history)
+            builder_chat_state = gr.State(builder_initial_history)
             builder_msg = gr.Textbox(
                 label="Mensaje",
                 placeholder="Describe lo que quieres construir...",
@@ -3617,8 +3656,10 @@ def build_ui() -> gr.Blocks:
             btn_home_from_scientific = gr.Button("⬅️ Home")
             gr.Markdown("## Científico")
             gr.Markdown("Modo científico.")
-            scientific_chat = gr.Chatbot(label="Scientific Chat", height=420, value=[])
-            scientific_chat_state = gr.State([])
+            with gr.Row():
+                btn_scientific_new_chat = gr.Button("Nuevo chat", size="sm")
+            scientific_chat = gr.Chatbot(label="Scientific Chat", height=420, value=scientific_initial_history)
+            scientific_chat_state = gr.State(scientific_initial_history)
             scientific_msg = gr.Textbox(
                 label="Mensaje",
                 placeholder="Describe tu consulta científica...",
@@ -3646,8 +3687,9 @@ def build_ui() -> gr.Blocks:
             gr.Markdown("### Plan y precios")
             with gr.Accordion("Planes", open=False):
                 gr.Markdown(
-                    "**Plus:** S/ 15 / mes (promo) → luego S/ 50\n\n"
-                    "**Pro:** S/ 500 / mes (promo) → luego S/ 1500\n\n"
+                    "**FREE:** S/ 0 / mes\n\n"
+                    "**PRO:** S/ 500 / mes (promo) → luego S/ 1500\n\n"
+                    "**LAB:** S/ 1500 / mes (promo) → luego S/ 2500\n\n"
                     "Pagos próximamente."
                 )
             btn_plan_upgrade = gr.Button("Actualizar (próximamente)")
@@ -3682,6 +3724,7 @@ def build_ui() -> gr.Blocks:
             inputs=[builder_msg, builder_chat_state],
             outputs=[builder_chat, builder_chat_state, builder_msg],
         )
+        btn_builder_new_chat.click(fn=ui_new_builder_chat, inputs=[], outputs=[builder_chat, builder_chat_state])
         btn_builder_export.click(
             fn=export_builder_project,
             inputs=[builder_project_id],
@@ -3691,6 +3734,11 @@ def build_ui() -> gr.Blocks:
             fn=scientific_chat_send,
             inputs=[scientific_msg, scientific_chat_state],
             outputs=[scientific_chat, scientific_chat_state, scientific_msg],
+        )
+        btn_scientific_new_chat.click(
+            fn=ui_new_scientific_chat,
+            inputs=[],
+            outputs=[scientific_chat, scientific_chat_state],
         )
 
         btn_login.click(
