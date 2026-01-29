@@ -3235,14 +3235,20 @@ def _normalize_history_messages(history: Any) -> List[Dict[str, str]]:
                 messages.append({"role": "assistant", "content": bot_text})
     return messages
 
+def _safe_read_json(path: str, default: Any) -> Any:
+    try:
+        if not os.path.exists(path):
+            return default
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        return default
+
 def load_chat(view: str) -> List[Dict[str, str]]:
     try:
         os.makedirs(UI_DATA_DIR, exist_ok=True)
         path = os.path.join(UI_DATA_DIR, f"{view}_chat.json")
-        if not os.path.exists(path):
-            return []
-        with open(path, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
+        payload = _safe_read_json(path, [])
         return _normalize_history_messages(payload)
     except Exception:
         return []
@@ -3256,6 +3262,115 @@ def save_chat(view: str, history: Any) -> None:
             json.dump(payload, handle, ensure_ascii=False, indent=2)
     except Exception:
         return
+
+def load_active(view: str) -> List[Dict[str, str]]:
+    try:
+        os.makedirs(UI_DATA_DIR, exist_ok=True)
+        path = os.path.join(UI_DATA_DIR, f"{view}_active.json")
+        payload = _safe_read_json(path, [])
+        return _normalize_history_messages(payload)
+    except Exception:
+        return []
+
+def save_active(view: str, history: Any) -> None:
+    try:
+        os.makedirs(UI_DATA_DIR, exist_ok=True)
+        path = os.path.join(UI_DATA_DIR, f"{view}_active.json")
+        payload = _normalize_history_messages(history)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+    except Exception:
+        return
+
+def load_chats(view: str) -> List[Dict[str, Any]]:
+    try:
+        os.makedirs(UI_DATA_DIR, exist_ok=True)
+        path = os.path.join(UI_DATA_DIR, f"{view}_chats.json")
+        payload = _safe_read_json(path, [])
+        if not isinstance(payload, list):
+            return []
+        chats: List[Dict[str, Any]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            history = _normalize_history_messages(item.get("history"))
+            chat_id = item.get("id")
+            title = item.get("title")
+            ts = item.get("ts")
+            if isinstance(chat_id, str) and isinstance(title, str) and isinstance(ts, str):
+                chats.append(
+                    {
+                        "id": chat_id,
+                        "title": title,
+                        "ts": ts,
+                        "history": history,
+                        "hash": item.get("hash"),
+                    }
+                )
+        return chats
+    except Exception:
+        return []
+
+def save_chats(view: str, chats: List[Dict[str, Any]]) -> None:
+    try:
+        os.makedirs(UI_DATA_DIR, exist_ok=True)
+        path = os.path.join(UI_DATA_DIR, f"{view}_chats.json")
+        safe_payload: List[Dict[str, Any]] = []
+        for item in chats:
+            if not isinstance(item, dict):
+                continue
+            history = _normalize_history_messages(item.get("history"))
+            chat_id = item.get("id")
+            title = item.get("title")
+            ts = item.get("ts")
+            if isinstance(chat_id, str) and isinstance(title, str) and isinstance(ts, str):
+                safe_payload.append(
+                    {
+                        "id": chat_id,
+                        "title": title,
+                        "ts": ts,
+                        "history": history,
+                        "hash": item.get("hash"),
+                    }
+                )
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(safe_payload, handle, ensure_ascii=False, indent=2)
+    except Exception:
+        return
+
+def _snapshot_title() -> str:
+    return f"Proyecto {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+def snapshot_current_to_list(view: str, history: Any, chats: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    history_messages = _normalize_history_messages(history)
+    if not history_messages:
+        return list(chats or load_chats(view))
+    chat_list = list(chats or load_chats(view))
+    history_hash = sha256_text(json.dumps(history_messages, ensure_ascii=False, sort_keys=True))
+    if any(item.get("hash") == history_hash for item in chat_list):
+        return chat_list
+    chat_list.append(
+        {
+            "id": uuid.uuid4().hex[:8],
+            "title": _snapshot_title(),
+            "ts": safe_now(),
+            "history": history_messages,
+            "hash": history_hash,
+        }
+    )
+    save_chats(view, chat_list)
+    return chat_list
+
+def _chat_choices(chats: List[Dict[str, Any]]) -> List[Tuple[str, str]]:
+    choices: List[Tuple[str, str]] = []
+    for item in chats:
+        chat_id = item.get("id")
+        title = item.get("title")
+        ts = item.get("ts")
+        if isinstance(chat_id, str) and isinstance(title, str):
+            label = f"{title} · {ts}" if isinstance(ts, str) else title
+            choices.append((label, chat_id))
+    return choices
 
 # PATCH 46: flujo unificado de guardas 47/48 (clasificación + mensaje seguro)
 def _classify_chat_error(err: Exception) -> str:
@@ -3334,15 +3449,47 @@ def ui_new_chat() -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
     empty: List[Dict[str, str]] = []
     return empty, empty
 
-def ui_new_builder_chat() -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+def ui_new_builder_chat(
+    history: Any, chats: List[Dict[str, Any]]
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, Any]], gr.update]:
+    updated_chats = snapshot_current_to_list("builder", history, chats)
     empty: List[Dict[str, str]] = []
-    save_chat("builder", empty)
-    return empty, empty
+    save_active("builder", empty)
+    return empty, empty, updated_chats, gr.update(choices=_chat_choices(updated_chats), value=None)
 
-def ui_new_scientific_chat() -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+def ui_new_scientific_chat(
+    history: Any, chats: List[Dict[str, Any]]
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, Any]], gr.update]:
+    updated_chats = snapshot_current_to_list("scientific", history, chats)
     empty: List[Dict[str, str]] = []
-    save_chat("scientific", empty)
-    return empty, empty
+    save_active("scientific", empty)
+    return empty, empty, updated_chats, gr.update(choices=_chat_choices(updated_chats), value=None)
+
+def ui_select_builder_chat(
+    chat_id: Optional[str], history: Any, chats: List[Dict[str, Any]]
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, Any]], gr.update]:
+    updated_chats = snapshot_current_to_list("builder", history, chats)
+    if not chat_id:
+        return history, history, updated_chats, gr.update(choices=_chat_choices(updated_chats), value=None)
+    selected = next((item for item in updated_chats if item.get("id") == chat_id), None)
+    if not selected:
+        return history, history, updated_chats, gr.update(choices=_chat_choices(updated_chats), value=None)
+    new_history = _normalize_history_messages(selected.get("history"))
+    save_active("builder", new_history)
+    return new_history, new_history, updated_chats, gr.update(choices=_chat_choices(updated_chats), value=chat_id)
+
+def ui_select_scientific_chat(
+    chat_id: Optional[str], history: Any, chats: List[Dict[str, Any]]
+) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], List[Dict[str, Any]], gr.update]:
+    updated_chats = snapshot_current_to_list("scientific", history, chats)
+    if not chat_id:
+        return history, history, updated_chats, gr.update(choices=_chat_choices(updated_chats), value=None)
+    selected = next((item for item in updated_chats if item.get("id") == chat_id), None)
+    if not selected:
+        return history, history, updated_chats, gr.update(choices=_chat_choices(updated_chats), value=None)
+    new_history = _normalize_history_messages(selected.get("history"))
+    save_active("scientific", new_history)
+    return new_history, new_history, updated_chats, gr.update(choices=_chat_choices(updated_chats), value=chat_id)
 
 def builder_chat_send(message: str, history: Any):
     message = (message or "").strip()
@@ -3357,7 +3504,7 @@ def builder_chat_send(message: str, history: Any):
         reply = response.get("error") or "⚠️ Error al ejecutar builder."
     history_messages.append({"role": "user", "content": message})
     history_messages.append({"role": "assistant", "content": reply})
-    save_chat("builder", history_messages)
+    save_active("builder", history_messages)
     return history_messages, history_messages, ""
 
 def scientific_chat_send(message: str, history: Any):
@@ -3373,7 +3520,7 @@ def scientific_chat_send(message: str, history: Any):
         reply = response.get("error") or "⚠️ Error al ejecutar scientific."
     history_messages.append({"role": "user", "content": message})
     history_messages.append({"role": "assistant", "content": reply})
-    save_chat("scientific", history_messages)
+    save_active("scientific", history_messages)
     return history_messages, history_messages, ""
 
 # -----------------------------
@@ -3528,8 +3675,10 @@ def build_ui() -> gr.Blocks:
         language_state = gr.State("ES")
         account_state = gr.State({"status": "Invitado", "username": ""})
         is_admin_state = gr.State(False)
-        builder_initial_history = load_chat("builder")
-        scientific_initial_history = load_chat("scientific")
+        builder_initial_history = load_active("builder")
+        scientific_initial_history = load_active("scientific")
+        builder_saved_chats = load_chats("builder")
+        scientific_saved_chats = load_chats("scientific")
 
         with gr.Row():
             with gr.Column(scale=1, min_width=160):
@@ -3641,32 +3790,48 @@ def build_ui() -> gr.Blocks:
             with gr.Row():
                 btn_builder_export = gr.Button("Exportar")
             with gr.Row():
-                btn_builder_new_chat = gr.Button("Nuevo chat", size="sm")
-            builder_chat = gr.Chatbot(label="Builder Chat", height=420, value=builder_initial_history)
+                with gr.Column(scale=1, min_width=180):
+                    btn_builder_new_chat = gr.Button("Nuevo chat", size="sm")
+                    builder_chat_selector = gr.Radio(
+                        label="Chats",
+                        choices=_chat_choices(builder_saved_chats),
+                        value=None,
+                    )
+                with gr.Column(scale=4):
+                    builder_chat = gr.Chatbot(label="Builder Chat", height=420, value=builder_initial_history)
+                    builder_msg = gr.Textbox(
+                        label="Mensaje",
+                        placeholder="Describe lo que quieres construir...",
+                        lines=2,
+                    )
+                    with gr.Row():
+                        btn_builder_send = gr.Button("Enviar")
             builder_chat_state = gr.State(builder_initial_history)
-            builder_msg = gr.Textbox(
-                label="Mensaje",
-                placeholder="Describe lo que quieres construir...",
-                lines=2,
-            )
-            with gr.Row():
-                btn_builder_send = gr.Button("Enviar")
+            builder_chats_state = gr.State(builder_saved_chats)
 
         with gr.Column(visible=False) as scientific_view:
             btn_home_from_scientific = gr.Button("⬅️ Home")
             gr.Markdown("## Científico")
             gr.Markdown("Modo científico.")
             with gr.Row():
-                btn_scientific_new_chat = gr.Button("Nuevo chat", size="sm")
-            scientific_chat = gr.Chatbot(label="Scientific Chat", height=420, value=scientific_initial_history)
+                with gr.Column(scale=1, min_width=180):
+                    btn_scientific_new_chat = gr.Button("Nuevo chat", size="sm")
+                    scientific_chat_selector = gr.Radio(
+                        label="Chats",
+                        choices=_chat_choices(scientific_saved_chats),
+                        value=None,
+                    )
+                with gr.Column(scale=4):
+                    scientific_chat = gr.Chatbot(label="Scientific Chat", height=420, value=scientific_initial_history)
+                    scientific_msg = gr.Textbox(
+                        label="Mensaje",
+                        placeholder="Describe tu consulta científica...",
+                        lines=2,
+                    )
+                    with gr.Row():
+                        btn_scientific_send = gr.Button("Enviar")
             scientific_chat_state = gr.State(scientific_initial_history)
-            scientific_msg = gr.Textbox(
-                label="Mensaje",
-                placeholder="Describe tu consulta científica...",
-                lines=2,
-            )
-            with gr.Row():
-                btn_scientific_send = gr.Button("Enviar")
+            scientific_chats_state = gr.State(scientific_saved_chats)
 
         with gr.Column(visible=False) as config_view:
             btn_home_from_config = gr.Button("⬅️ Home")
@@ -3688,7 +3853,7 @@ def build_ui() -> gr.Blocks:
             with gr.Accordion("Planes", open=False):
                 gr.Markdown(
                     "**FREE:** S/ 0 / mes\n\n"
-                    "**PRO:** S/ 500 / mes (promo) → luego S/ 1500\n\n"
+                    "**PRO:** S/ 250 / mes (promo) → luego S/ 500\n\n"
                     "**LAB:** S/ 1500 / mes (promo) → luego S/ 2500\n\n"
                     "Pagos próximamente."
                 )
@@ -3724,7 +3889,16 @@ def build_ui() -> gr.Blocks:
             inputs=[builder_msg, builder_chat_state],
             outputs=[builder_chat, builder_chat_state, builder_msg],
         )
-        btn_builder_new_chat.click(fn=ui_new_builder_chat, inputs=[], outputs=[builder_chat, builder_chat_state])
+        btn_builder_new_chat.click(
+            fn=ui_new_builder_chat,
+            inputs=[builder_chat_state, builder_chats_state],
+            outputs=[builder_chat, builder_chat_state, builder_chats_state, builder_chat_selector],
+        )
+        builder_chat_selector.change(
+            fn=ui_select_builder_chat,
+            inputs=[builder_chat_selector, builder_chat_state, builder_chats_state],
+            outputs=[builder_chat, builder_chat_state, builder_chats_state, builder_chat_selector],
+        )
         btn_builder_export.click(
             fn=export_builder_project,
             inputs=[builder_project_id],
@@ -3737,8 +3911,13 @@ def build_ui() -> gr.Blocks:
         )
         btn_scientific_new_chat.click(
             fn=ui_new_scientific_chat,
-            inputs=[],
-            outputs=[scientific_chat, scientific_chat_state],
+            inputs=[scientific_chat_state, scientific_chats_state],
+            outputs=[scientific_chat, scientific_chat_state, scientific_chats_state, scientific_chat_selector],
+        )
+        scientific_chat_selector.change(
+            fn=ui_select_scientific_chat,
+            inputs=[scientific_chat_selector, scientific_chat_state, scientific_chats_state],
+            outputs=[scientific_chat, scientific_chat_state, scientific_chats_state, scientific_chat_selector],
         )
 
         btn_login.click(
