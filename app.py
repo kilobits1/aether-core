@@ -31,6 +31,7 @@ import threading
 import importlib.util
 import copy
 import traceback
+import shutil
 from queue import PriorityQueue
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple, Optional
@@ -843,6 +844,31 @@ def export_demo1() -> str:
         return json.dumps({"ok": True, "demo": payload}, indent=2, ensure_ascii=False)
     except Exception as e:
         return json.dumps({"ok": False, "error": str(e)}, indent=2, ensure_ascii=False)
+
+def export_builder_project(project_id: Optional[str] = None) -> Tuple[str, str]:
+    export_id = (project_id or "").strip() or uuid.uuid4().hex[:8]
+    export_dir = os.path.join(DATA_DIR, "exports", export_id)
+    os.makedirs(export_dir, exist_ok=True)
+    spec_path = os.path.join(export_dir, "spec.md")
+    plan_path = os.path.join(export_dir, "plan.md")
+    timestamp = safe_now()
+    with open(spec_path, "w", encoding="utf-8") as spec_file:
+        spec_file.write(
+            "# Especificación (V1)\n\n"
+            f"- Proyecto: {export_id}\n"
+            f"- Generado: {timestamp}\n\n"
+            "Placeholder de especificación. Completar con los requisitos del usuario.\n"
+        )
+    with open(plan_path, "w", encoding="utf-8") as plan_file:
+        plan_file.write(
+            "# Plan (V1)\n\n"
+            f"- Proyecto: {export_id}\n"
+            f"- Generado: {timestamp}\n\n"
+            "Placeholder de plan. Completar con tareas y milestones.\n"
+        )
+    zip_base = os.path.join(export_dir, f"aether_export_{export_id}")
+    zip_path = shutil.make_archive(zip_base, "zip", root_dir=export_dir)
+    return export_id, zip_path
 
 # -----------------------------
 # EVENTS LOG (JSONL)
@@ -3271,6 +3297,50 @@ def chat_send(message: str, history: Any):
     history_messages.append({"role": "assistant", "content": reply})
     return history_messages, history_messages, ""
 
+def _format_plugin_reply(payload: Any) -> str:
+    if payload is None:
+        return "⚠️ Sin respuesta del módulo."
+    if isinstance(payload, str):
+        return payload
+    try:
+        return json.dumps(payload, indent=2, ensure_ascii=False)
+    except Exception:
+        return str(payload)
+
+def ui_new_chat() -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
+    empty: List[Dict[str, str]] = []
+    return empty, empty
+
+def builder_chat_send(message: str, history: Any):
+    message = (message or "").strip()
+    history_messages = _normalize_history_messages(history)
+    if not message:
+        return history_messages, history_messages, ""
+    command = f"builder: {message}"
+    response = execute_ai_module(command)
+    if response.get("success"):
+        reply = _format_plugin_reply(response.get("result"))
+    else:
+        reply = response.get("error") or "⚠️ Error al ejecutar builder."
+    history_messages.append({"role": "user", "content": message})
+    history_messages.append({"role": "assistant", "content": reply})
+    return history_messages, history_messages, ""
+
+def scientific_chat_send(message: str, history: Any):
+    message = (message or "").strip()
+    history_messages = _normalize_history_messages(history)
+    if not message:
+        return history_messages, history_messages, ""
+    command = f"scientific: {message}"
+    response = execute_ai_module(command)
+    if response.get("success"):
+        reply = _format_plugin_reply(response.get("result"))
+    else:
+        reply = response.get("error") or "⚠️ Error al ejecutar scientific."
+    history_messages.append({"role": "user", "content": message})
+    history_messages.append({"role": "assistant", "content": reply})
+    return history_messages, history_messages, ""
+
 # -----------------------------
 # STARTUP (safe once)
 # -----------------------------
@@ -3404,20 +3474,19 @@ def build_ui() -> gr.Blocks:
     with gr.Blocks(
         title="AETHER CORE — HF SAFE",
         css="""
-        #aether-header small { color: #8a8a8a; font-size: 12px; }
-        #aether-logo-btn button {
-            width: 64px;
-            height: 64px;
+        #aether-header .aether-header-line { color: #8a8a8a; font-size: 12px; }
+        #aether-logo img {
+            width: 52px;
+            height: 52px;
             border-radius: 50%;
-            border: none;
-            box-shadow: none;
-            background-color: transparent;
-            background-image: url("file=aether_logo.png");
-            background-size: cover;
-            background-position: center;
+            object-fit: cover;
+            display: block;
+        }
+        #aether-gear button {
+            width: 32px;
+            min-width: 32px;
             padding: 0;
         }
-        #aether-logo-btn button:hover { filter: brightness(0.95); }
         """,
     ) as demo:
         view_state = gr.State("home")
@@ -3429,21 +3498,27 @@ def build_ui() -> gr.Blocks:
             with gr.Column(scale=1, min_width=160):
                 gr.HTML(
                     "<div id='aether-header'>"
-                    "<small>v1.0</small><br/>"
-                    "<small>Plan: Free / Plus / Pro</small>"
+                    "<div class='aether-header-line'>v1.0</div>"
+                    "<div class='aether-header-line'>Plan actual: Free</div>"
                     "</div>"
                 )
             with gr.Column(scale=1, min_width=120):
-                btn_open_config = gr.Button("⚙️", size="sm")
-
-        gr.Markdown("---")
+                btn_open_config = gr.Button("⚙️", size="sm", elem_id="aether-gear")
 
         with gr.Column(visible=True) as home_view:
             with gr.Row():
-                with gr.Column(scale=1, min_width=100):
-                    logo_btn = gr.Button("", elem_id="aether-logo-btn")
+                with gr.Column(scale=1, min_width=80):
+                    gr.HTML("<div id='aether-logo'><img src='file=aether_logo.png' alt='Aether logo'></div>")
                 with gr.Column(scale=5):
                     boot_msg = gr.Textbox(label="Boot", lines=1, visible=False)
+
+                    with gr.Row():
+                        btn_new_chat = gr.Button("Nuevo chat", size="sm")
+                        chat_selector = gr.Dropdown(
+                            label="Chats",
+                            choices=["Chat 1"],
+                            value="Chat 1",
+                        )
 
                     chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
                     chat_state = gr.State([])
@@ -3517,11 +3592,33 @@ def build_ui() -> gr.Blocks:
             btn_home_from_builder = gr.Button("⬅️ Home")
             gr.Markdown("## Builder")
             gr.Markdown("Modo creador.")
+            builder_project_id = gr.Textbox(label="Project ID", value="", interactive=False)
+            builder_export_file = gr.File(label="Export ZIP", interactive=False)
+            with gr.Row():
+                btn_builder_export = gr.Button("Exportar")
+            builder_chat = gr.Chatbot(label="Builder Chat", height=420, value=[])
+            builder_chat_state = gr.State([])
+            builder_msg = gr.Textbox(
+                label="Mensaje",
+                placeholder="Describe lo que quieres construir...",
+                lines=2,
+            )
+            with gr.Row():
+                btn_builder_send = gr.Button("Enviar")
 
         with gr.Column(visible=False) as scientific_view:
             btn_home_from_scientific = gr.Button("⬅️ Home")
             gr.Markdown("## Científico")
             gr.Markdown("Modo científico.")
+            scientific_chat = gr.Chatbot(label="Scientific Chat", height=420, value=[])
+            scientific_chat_state = gr.State([])
+            scientific_msg = gr.Textbox(
+                label="Mensaje",
+                placeholder="Describe tu consulta científica...",
+                lines=2,
+            )
+            with gr.Row():
+                btn_scientific_send = gr.Button("Enviar")
 
         with gr.Column(visible=False) as config_view:
             btn_home_from_config = gr.Button("⬅️ Home")
@@ -3553,6 +3650,7 @@ def build_ui() -> gr.Blocks:
 
         # wiring
         btn_send.click(fn=chat_send, inputs=[user_msg, chat_state], outputs=[chat, chat_state, user_msg])
+        btn_new_chat.click(fn=ui_new_chat, inputs=[], outputs=[chat, chat_state])
         btn_enqueue.click(fn=ui_enqueue, inputs=[task_cmd, prio], outputs=[status, logs])
         btn_reload.click(fn=ui_reload_modules, inputs=[], outputs=[status])
         btn_export_demo.click(fn=export_demo1, inputs=[], outputs=[export_out])
@@ -3574,6 +3672,22 @@ def build_ui() -> gr.Blocks:
 
         btn_replica_export.click(fn=ui_replica_export, inputs=[replica_name], outputs=[replica_out])
         btn_replica_import.click(fn=ui_replica_import, inputs=[replica_in], outputs=[replica_result])
+
+        btn_builder_send.click(
+            fn=builder_chat_send,
+            inputs=[builder_msg, builder_chat_state],
+            outputs=[builder_chat, builder_chat_state, builder_msg],
+        )
+        btn_builder_export.click(
+            fn=export_builder_project,
+            inputs=[builder_project_id],
+            outputs=[builder_project_id, builder_export_file],
+        )
+        btn_scientific_send.click(
+            fn=scientific_chat_send,
+            inputs=[scientific_msg, scientific_chat_state],
+            outputs=[scientific_chat, scientific_chat_state, scientific_msg],
+        )
 
         btn_login.click(
             fn=ui_login,
@@ -3607,11 +3721,6 @@ def build_ui() -> gr.Blocks:
 
         btn_open_config.click(
             fn=lambda: ui_set_view("config"),
-            inputs=[],
-            outputs=[home_view, builder_view, scientific_view, config_view, view_state],
-        )
-        logo_btn.click(
-            fn=lambda: ui_set_view("home"),
             inputs=[],
             outputs=[home_view, builder_view, scientific_view, config_view, view_state],
         )
