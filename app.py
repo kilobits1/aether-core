@@ -1325,16 +1325,15 @@ def execute_ai_module(command: str) -> Dict[str, Any]:
                     allowed_shell_cmds=[],
                     allowed_http_domains=[],
                 )
-                ctx = st if isinstance(st, dict) else {}
-                ctx["data_dir"] = data_dir
-                ctx["adapters"] = adapters
+                ctx = {
+                    "data_dir": data_dir,
+                    "adapters": adapters,
+                    "state": st,
+                }
                 try:
                     return {"success": True, "module": name, "result": mod.run(command, ctx=ctx, state=st)}
                 except TypeError:
-                    try:
-                        return {"success": True, "module": name, "result": mod.run(command, state=st)}
-                    except TypeError:
-                        return {"success": True, "module": name, "result": mod.run(command)}
+                    return {"success": True, "module": name, "result": mod.run(command, state=st)}
         except Exception as e:
             log_event("MODULE_RUN_ERROR", {"module": name, "error": str(e)})
             return {"success": False, "error": f"{name}: {e}"}
