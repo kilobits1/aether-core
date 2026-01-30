@@ -3657,13 +3657,6 @@ def build_ui() -> gr.Blocks:
         title="AETHER CORE — HF SAFE",
         css="""
         #aether-header .aether-header-line { color: #8a8a8a; font-size: 12px; }
-        #aether-logo img {
-            width: 52px;
-            height: 52px;
-            border-radius: 50%;
-            object-fit: cover;
-            display: block;
-        }
         #aether-gear button {
             width: 32px;
             min-width: 32px;
@@ -3684,8 +3677,8 @@ def build_ui() -> gr.Blocks:
             with gr.Column(scale=1, min_width=160):
                 gr.HTML(
                     "<div id='aether-header'>"
-                    "<div class='aether-header-line'>v1.0</div>"
-                    "<div class='aether-header-line'>Plan actual: FREE</div>"
+                    "<div>Aether — Beta cerrada</div>"
+                    "<div class='aether-header-line'>Versión de prueba</div>"
                     "</div>"
                 )
             with gr.Column(scale=1, min_width=120):
@@ -3693,15 +3686,6 @@ def build_ui() -> gr.Blocks:
 
         with gr.Column(visible=True) as home_view:
             with gr.Row():
-                with gr.Column(scale=1, min_width=80):
-                    gr.Image(
-                        value="aether_logo.png",
-                        show_label=False,
-                        interactive=False,
-                        width=52,
-                        height=52,
-                        elem_id="aether-logo",
-                    )
                 with gr.Column(scale=5):
                     boot_msg = gr.Textbox(label="Boot", lines=1, visible=False)
 
@@ -3920,14 +3904,7 @@ def build_ui() -> gr.Blocks:
             )
 
             gr.Markdown("---")
-            gr.Markdown("#### Contacto")
-            gr.HTML(
-                "<div style='font-size: 0.85em; color: #666;'>"
-                "Para consultas institucionales o colaboración profesional, contáctanos en:"
-                "<br><br>"
-                "inf.aether@outlook.com"
-                "</div>"
-            )
+            gr.HTML("<div style='font-size: 0.85em; color: #666;'>inf.aether@outlook.com</div>")
 
         # wiring
         btn_send.click(fn=chat_send, inputs=[user_msg, chat_state], outputs=[chat, chat_state, user_msg])
