@@ -3678,7 +3678,6 @@ def build_ui() -> gr.Blocks:
                 gr.HTML(
                     "<div id='aether-header'>"
                     "<div>Aether — Beta cerrada</div>"
-                    "<div class='aether-header-line'>Versión de prueba</div>"
                     "</div>"
                 )
             with gr.Column(scale=1, min_width=120):
@@ -3865,7 +3864,7 @@ def build_ui() -> gr.Blocks:
                         )
                     with gr.Column():
                         gr.Markdown(
-                            "### PRO — S/ 250 (promo) → luego S/ 500\n"
+                            "### PRO — S/ 49 (promo) → luego S/ 149\n"
                             "**CREAR**\n"
                             "- Hasta 5 proyectos\n"
                             "- Plan más detallado (arquitectura, módulos, flujo)\n"
@@ -3882,7 +3881,7 @@ def build_ui() -> gr.Blocks:
                         )
                     with gr.Column():
                         gr.Markdown(
-                            "### LAB — S/ 1500 (promo) → luego S/ 2500\n"
+                            "### LAB — S/ 299 (promo) → luego S/ 799\n"
                             "**CREAR**\n"
                             "- Proyectos ilimitados\n"
                             "- Entregables completos (documentación, checklist, estructura para equipo)\n"
