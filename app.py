@@ -3783,8 +3783,13 @@ def build_ui() -> gr.Blocks:
 
         with gr.Column(visible=False) as builder_view:
             btn_home_from_builder = gr.Button("⬅️ Home")
-            gr.Markdown("## Builder")
-            gr.Markdown("Modo creador.")
+            gr.Markdown("## Crear tu Web / App / Sistema")
+            gr.Markdown("Diseña y estructura proyectos en distintas tecnologías.")
+            gr.Markdown("**Web · Móvil · Escritorio · Embebidos**  \n(Python · Java · C++ · JavaScript · Arduino · y más)")
+            gr.Markdown(
+                "Aether puede ayudarte a diseñar proyectos y generar código base, "
+                "para que los pruebes y continúes el desarrollo en tu propio entorno."
+            )
             builder_project_id = gr.Textbox(label="Project ID", value="", interactive=False)
             builder_export_file = gr.File(label="Export ZIP", interactive=False)
             with gr.Row():
@@ -3811,8 +3816,13 @@ def build_ui() -> gr.Blocks:
 
         with gr.Column(visible=False) as scientific_view:
             btn_home_from_scientific = gr.Button("⬅️ Home")
-            gr.Markdown("## Científico")
-            gr.Markdown("Modo científico.")
+            gr.Markdown("## Modo Científico")
+            gr.Markdown("Resuelve problemas reales de ciencia e investigación con método y claridad")
+            gr.Markdown(
+                "Aether te ayuda a estructurar investigaciones científicas, "
+                "analizar métodos, definir modelos y explorar escenarios, "
+                "para que tomes mejores decisiones antes de simular o experimentar."
+            )
             with gr.Row():
                 with gr.Column(scale=1, min_width=180):
                     btn_scientific_new_chat = gr.Button("Nuevo chat", size="sm")
@@ -3851,13 +3861,63 @@ def build_ui() -> gr.Blocks:
             gr.Markdown("---")
             gr.Markdown("### Plan y precios")
             with gr.Accordion("Planes", open=False):
-                gr.Markdown(
-                    "**FREE:** S/ 0 / mes\n\n"
-                    "**PRO:** S/ 250 / mes (promo) → luego S/ 500\n\n"
-                    "**LAB:** S/ 1500 / mes (promo) → luego S/ 2500\n\n"
-                    "Pagos próximamente."
-                )
+                with gr.Row():
+                    with gr.Column():
+                        gr.Markdown(
+                            "### FREE — S/ 0\n"
+                            "**CREAR**\n"
+                            "- 1 proyecto activo\n"
+                            "- Guía paso a paso (idea → estructura → checklist)\n"
+                            "- Código base simple (cuando aplique)\n"
+                            "- Export MD (documento editable)\n\n"
+                            "**CIENTÍFICO**\n"
+                            "- Método científico guiado (problema → hipótesis → método)\n"
+                            "- Escenarios básicos\n"
+                            "- Conclusiones y limitaciones claras\n"
+                            "- Export MD (documento editable)\n\n"
+                            "**EXTRAS**\n"
+                            "- Chat y proyecto persistente\n"
+                            "- Interfaz simple y fácil de usar"
+                        )
+                    with gr.Column():
+                        gr.Markdown(
+                            "### PRO — S/ 250 (promo) → luego S/ 500\n"
+                            "**CREAR**\n"
+                            "- Hasta 5 proyectos\n"
+                            "- Plan más detallado (arquitectura, módulos, flujo)\n"
+                            "- Código base más completo\n"
+                            "- Export PDF + MD (documento editable)\n\n"
+                            "**CIENTÍFICO**\n"
+                            "- Escenarios comparativos\n"
+                            "- Análisis más profundo y ordenado\n"
+                            "- Mejor continuidad del proyecto\n"
+                            "- Export PDF + MD (documento editable)\n\n"
+                            "**EXTRAS**\n"
+                            "- Historial ampliado\n"
+                            "- Mejor organización de proyectos"
+                        )
+                    with gr.Column():
+                        gr.Markdown(
+                            "### LAB — S/ 1500 (promo) → luego S/ 2500\n"
+                            "**CREAR**\n"
+                            "- Proyectos ilimitados\n"
+                            "- Entregables completos (documentación, checklist, estructura para equipo)\n"
+                            "- Código base avanzado (cuando aplique)\n"
+                            "- Export avanzado (ZIP cuando aplique)\n\n"
+                            "**CIENTÍFICO**\n"
+                            "- Estudios completos y reproducibles\n"
+                            "- Escenarios complejos\n"
+                            "- Mayor rigor y trazabilidad\n"
+                            "- Export avanzado (cuando aplique)\n\n"
+                            "**EXTRAS**\n"
+                            "- Historial completo\n"
+                            "- Prioridad de recursos"
+                        )
             btn_plan_upgrade = gr.Button("Actualizar (próximamente)")
+            gr.Markdown(
+                "Aether te ayuda a pensar, analizar y crear con orden, "
+                "para que continúes el trabajo en tu propio entorno."
+            )
 
         # wiring
         btn_send.click(fn=chat_send, inputs=[user_msg, chat_state], outputs=[chat, chat_state, user_msg])
