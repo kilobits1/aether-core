@@ -3919,6 +3919,16 @@ def build_ui() -> gr.Blocks:
                 "para que continúes el trabajo en tu propio entorno."
             )
 
+            gr.Markdown("---")
+            gr.Markdown("#### Contacto")
+            gr.HTML(
+                "<div style='font-size: 0.85em; color: #666;'>"
+                "Para consultas institucionales o colaboración profesional, contáctanos en:"
+                "<br><br>"
+                "inf.aether@outlook.com"
+                "</div>"
+            )
+
         # wiring
         btn_send.click(fn=chat_send, inputs=[user_msg, chat_state], outputs=[chat, chat_state, user_msg])
         btn_new_chat.click(fn=ui_new_chat, inputs=[], outputs=[chat, chat_state])
