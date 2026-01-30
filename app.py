@@ -39,6 +39,632 @@ from typing import Any, Dict, List, Tuple, Optional
 import gradio as gr
 from plugins.adapters import Adapters
 
+
+SUPPORTED_LANGS = ("es", "en", "pt-BR", "pt-PT")
+LANGUAGE_CHOICES = [
+    ("Español", "es"),
+    ("English", "en"),
+    ("Português (Brasil)", "pt-BR"),
+    ("Português (Portugal)", "pt-PT"),
+]
+LANG = {
+    "es": {
+        "app_title": "AETHER CORE — HF SAFE",
+        "header_beta": "Aether — Beta cerrada",
+        "boot_label": "Boot",
+        "new_chat": "Nuevo chat",
+        "chats": "Chats",
+        "chat_label": "AETHER Chat",
+        "message_label": "Mensaje",
+        "message_placeholder": "Describe lo que quieres hacer...",
+        "send_chat": "Enviar (Chat)",
+        "reload_modules": "Reload Modules",
+        "export_demo1": "Export demo1",
+        "refresh_status": "Refresh Status",
+        "btn_builder": "🛠️ Crear tu Web / App",
+        "btn_scientific": "🔬 Científico",
+        "admin_ops": "Operaciones avanzadas (Admin)",
+        "task_queue_title": "### Cola de tareas",
+        "task_cmd_label": "Comando para cola",
+        "task_cmd_placeholder": "Ej: revisar estado interno",
+        "priority_label": "Prioridad (1=alta · 20=baja)",
+        "enqueue_task": "Enqueue Task (cola)",
+        "orchestrator_title": "### v29 — Project Orchestrator",
+        "project_name_label": "Nuevo proyecto",
+        "project_name_placeholder": "Nombre del proyecto",
+        "create_project": "Crear proyecto",
+        "project_label": "Proyecto",
+        "task_command_label": "Nueva tarea (comando)",
+        "task_command_placeholder": "Ej: revisar estado interno",
+        "add_task": "Agregar tarea",
+        "task_label": "Tarea",
+        "run_task": "Run Task (policy/freeze)",
+        "orchestrator_output": "Orchestrator output",
+        "status_json": "Status JSON",
+        "logs_last_n": "Logs últimos N",
+        "tail_logs": "Tail Logs",
+        "refresh_logs": "Refresh Logs",
+        "export_demo1_label": "Export demo1",
+        "snapshots_title": "### v28 — Snapshots (v28.3 incluye plugins)",
+        "snapshot_name_label": "Snapshot name",
+        "create_snapshot": "Create Snapshot",
+        "restore_snapshot": "Restore Snapshot",
+        "list_snapshots": "List Snapshots",
+        "export_snapshot": "Export Snapshot",
+        "snapshot_output": "Snapshot output",
+        "import_snapshot_json": "Import Snapshot JSON",
+        "import_snapshot": "Import Snapshot",
+        "replica_title": "### v28.2 — Réplica portable (1 JSON)",
+        "replica_name_label": "Replica name",
+        "export_replica": "Export Replica (JSON)",
+        "replica_json": "Replica JSON",
+        "import_replica_json": "Import Replica JSON",
+        "import_replica_apply": "Import Replica (apply)",
+        "replica_import_result": "Replica import result",
+        "home_button": "⬅️ Home",
+        "builder_title": "## Crear tu Web / App / Sistema",
+        "builder_subtitle": "Diseña y estructura proyectos en distintas tecnologías.",
+        "builder_tags": "**Web · Móvil · Escritorio · Embebidos**  \n(Python · Java · C++ · JavaScript · Arduino · y más)",
+        "builder_desc": (
+            "Aether puede ayudarte a diseñar proyectos y generar código base, "
+            "para que los pruebes y continúes el desarrollo en tu propio entorno."
+        ),
+        "project_id_label": "Project ID",
+        "export_zip_label": "Export ZIP",
+        "export_button": "Exportar",
+        "builder_chat_label": "Builder Chat",
+        "builder_message_placeholder": "Describe lo que quieres construir...",
+        "send_button": "Enviar",
+        "scientific_title": "## Modo Científico",
+        "scientific_subtitle": "Resuelve problemas reales de ciencia e investigación con método y claridad",
+        "scientific_desc": (
+            "Aether te ayuda a estructurar investigaciones científicas, "
+            "analizar métodos, definir modelos y explorar escenarios, "
+            "para que tomes mejores decisiones antes de simular o experimentar."
+        ),
+        "scientific_chat_label": "Scientific Chat",
+        "scientific_message_placeholder": "Describe tu consulta científica...",
+        "config_title": "## Configuración",
+        "config_account_title": "### Cuenta",
+        "account_status_label": "Estado",
+        "account_status_guest": "Invitado",
+        "account_status_admin": "Admin",
+        "username_label": "Usuario",
+        "username_placeholder": "Tu usuario",
+        "pin_label": "Pin / Código",
+        "pin_placeholder": "Código de acceso",
+        "login": "Login",
+        "logout": "Cerrar sesión",
+        "config_language_title": "### Idioma",
+        "language_selector_label": "Selecciona idioma",
+        "config_plans_title": "### Plan y precios",
+        "plans_accordion_label": "Planes",
+        "plan_free_text": (
+            "### FREE — S/ 0\n"
+            "**CREAR**\n"
+            "- 1 proyecto activo\n"
+            "- Guía paso a paso (idea → estructura → checklist)\n"
+            "- Código base simple (cuando aplique)\n"
+            "- Export MD (documento editable)\n\n"
+            "**CIENTÍFICO**\n"
+            "- Método científico guiado (problema → hipótesis → método)\n"
+            "- Escenarios básicos\n"
+            "- Conclusiones y limitaciones claras\n"
+            "- Export MD (documento editable)\n\n"
+            "**EXTRAS**\n"
+            "- Chat y proyecto persistente\n"
+            "- Interfaz simple y fácil de usar"
+        ),
+        "plan_pro_text": (
+            "### PRO — S/ 49 (promo) → luego S/ 149\n"
+            "**CREAR**\n"
+            "- Hasta 5 proyectos\n"
+            "- Plan más detallado (arquitectura, módulos, flujo)\n"
+            "- Código base más completo\n"
+            "- Export PDF + MD (documento editable)\n\n"
+            "**CIENTÍFICO**\n"
+            "- Escenarios comparativos\n"
+            "- Análisis más profundo y ordenado\n"
+            "- Mejor continuidad del proyecto\n"
+            "- Export PDF + MD (documento editable)\n\n"
+            "**EXTRAS**\n"
+            "- Historial ampliado\n"
+            "- Mejor organización de proyectos"
+        ),
+        "plan_lab_text": (
+            "### LAB — S/ 299 (promo) → luego S/ 799\n"
+            "**CREAR**\n"
+            "- Proyectos ilimitados\n"
+            "- Entregables completos (documentación, checklist, estructura para equipo)\n"
+            "- Código base avanzado (cuando aplique)\n"
+            "- Export avanzado (ZIP cuando aplique)\n\n"
+            "**CIENTÍFICO**\n"
+            "- Estudios completos y reproducibles\n"
+            "- Escenarios complejos\n"
+            "- Mayor rigor y trazabilidad\n"
+            "- Export avanzado (cuando aplique)\n\n"
+            "**EXTRAS**\n"
+            "- Historial completo\n"
+            "- Prioridad de recursos"
+        ),
+        "plan_upgrade": "Actualizar (próximamente)",
+        "plan_footer": (
+            "Aether te ayuda a pensar, analizar y crear con orden, "
+            "para que continúes el trabajo en tu propio entorno."
+        ),
+    },
+    "en": {
+        "app_title": "AETHER CORE — HF SAFE",
+        "header_beta": "Aether — Closed beta",
+        "boot_label": "Boot",
+        "new_chat": "New chat",
+        "chats": "Chats",
+        "chat_label": "Aether Chat",
+        "message_label": "Message",
+        "message_placeholder": "Describe what you want to do...",
+        "send_chat": "Send (Chat)",
+        "reload_modules": "Reload Modules",
+        "export_demo1": "Export demo1",
+        "refresh_status": "Refresh Status",
+        "btn_builder": "🛠️ Build your Web / App",
+        "btn_scientific": "🔬 Scientific",
+        "admin_ops": "Advanced operations (Admin)",
+        "task_queue_title": "### Task queue",
+        "task_cmd_label": "Queue command",
+        "task_cmd_placeholder": "e.g. review internal status",
+        "priority_label": "Priority (1=high · 20=low)",
+        "enqueue_task": "Enqueue Task (queue)",
+        "orchestrator_title": "### v29 — Project Orchestrator",
+        "project_name_label": "New project",
+        "project_name_placeholder": "Project name",
+        "create_project": "Create project",
+        "project_label": "Project",
+        "task_command_label": "New task (command)",
+        "task_command_placeholder": "e.g. review internal status",
+        "add_task": "Add task",
+        "task_label": "Task",
+        "run_task": "Run Task (policy/freeze)",
+        "orchestrator_output": "Orchestrator output",
+        "status_json": "Status JSON",
+        "logs_last_n": "Logs last N",
+        "tail_logs": "Tail Logs",
+        "refresh_logs": "Refresh Logs",
+        "export_demo1_label": "Export demo1",
+        "snapshots_title": "### v28 — Snapshots (v28.3 includes plugins)",
+        "snapshot_name_label": "Snapshot name",
+        "create_snapshot": "Create Snapshot",
+        "restore_snapshot": "Restore Snapshot",
+        "list_snapshots": "List Snapshots",
+        "export_snapshot": "Export Snapshot",
+        "snapshot_output": "Snapshot output",
+        "import_snapshot_json": "Import Snapshot JSON",
+        "import_snapshot": "Import Snapshot",
+        "replica_title": "### v28.2 — Portable replica (1 JSON)",
+        "replica_name_label": "Replica name",
+        "export_replica": "Export Replica (JSON)",
+        "replica_json": "Replica JSON",
+        "import_replica_json": "Import Replica JSON",
+        "import_replica_apply": "Import Replica (apply)",
+        "replica_import_result": "Replica import result",
+        "home_button": "⬅️ Home",
+        "builder_title": "## Build your Web / App / System",
+        "builder_subtitle": "Design and structure projects in different technologies.",
+        "builder_tags": "**Web · Mobile · Desktop · Embedded**  \n(Python · Java · C++ · JavaScript · Arduino · and more)",
+        "builder_desc": (
+            "Aether can help you design projects and generate starter code "
+            "so you can test and continue development in your own environment."
+        ),
+        "project_id_label": "Project ID",
+        "export_zip_label": "Export ZIP",
+        "export_button": "Export",
+        "builder_chat_label": "Builder Chat",
+        "builder_message_placeholder": "Describe what you want to build...",
+        "send_button": "Send",
+        "scientific_title": "## Scientific Mode",
+        "scientific_subtitle": "Solve real science and research problems with method and clarity",
+        "scientific_desc": (
+            "Aether helps you structure scientific research, analyze methods, define models, "
+            "and explore scenarios so you can make better decisions before simulating or experimenting."
+        ),
+        "scientific_chat_label": "Scientific Chat",
+        "scientific_message_placeholder": "Describe your scientific question...",
+        "config_title": "## Settings",
+        "config_account_title": "### Account",
+        "account_status_label": "Status",
+        "account_status_guest": "Guest",
+        "account_status_admin": "Admin",
+        "username_label": "User",
+        "username_placeholder": "Your username",
+        "pin_label": "PIN / Code",
+        "pin_placeholder": "Access code",
+        "login": "Login",
+        "logout": "Log out",
+        "config_language_title": "### Language",
+        "language_selector_label": "Select language",
+        "config_plans_title": "### Plans and pricing",
+        "plans_accordion_label": "Plans",
+        "plan_free_text": (
+            "### FREE — S/ 0\n"
+            "**BUILD**\n"
+            "- 1 active project\n"
+            "- Step-by-step guide (idea → structure → checklist)\n"
+            "- Simple starter code (when applicable)\n"
+            "- Export MD (editable document)\n\n"
+            "**SCIENTIFIC**\n"
+            "- Guided scientific method (problem → hypothesis → method)\n"
+            "- Basic scenarios\n"
+            "- Clear conclusions and limitations\n"
+            "- Export MD (editable document)\n\n"
+            "**EXTRAS**\n"
+            "- Persistent chat and project\n"
+            "- Simple, easy-to-use interface"
+        ),
+        "plan_pro_text": (
+            "### PRO — S/ 49 (promo) → then S/ 149\n"
+            "**BUILD**\n"
+            "- Up to 5 projects\n"
+            "- More detailed plan (architecture, modules, flow)\n"
+            "- More complete starter code\n"
+            "- Export PDF + MD (editable document)\n\n"
+            "**SCIENTIFIC**\n"
+            "- Comparative scenarios\n"
+            "- Deeper, more organized analysis\n"
+            "- Better project continuity\n"
+            "- Export PDF + MD (editable document)\n\n"
+            "**EXTRAS**\n"
+            "- Expanded history\n"
+            "- Better project organization"
+        ),
+        "plan_lab_text": (
+            "### LAB — S/ 299 (promo) → then S/ 799\n"
+            "**BUILD**\n"
+            "- Unlimited projects\n"
+            "- Full deliverables (documentation, checklist, team structure)\n"
+            "- Advanced starter code (when applicable)\n"
+            "- Advanced export (ZIP when applicable)\n\n"
+            "**SCIENTIFIC**\n"
+            "- Complete, reproducible studies\n"
+            "- Complex scenarios\n"
+            "- Greater rigor and traceability\n"
+            "- Advanced export (when applicable)\n\n"
+            "**EXTRAS**\n"
+            "- Full history\n"
+            "- Resource priority"
+        ),
+        "plan_upgrade": "Upgrade (coming soon)",
+        "plan_footer": (
+            "Aether helps you think, analyze, and create with order "
+            "so you can continue your work in your own environment."
+        ),
+    },
+    "pt-BR": {
+        "app_title": "AETHER CORE — HF SAFE",
+        "header_beta": "Aether — Beta fechada",
+        "boot_label": "Boot",
+        "new_chat": "Novo chat",
+        "chats": "Chats",
+        "chat_label": "Chat Aether",
+        "message_label": "Mensagem",
+        "message_placeholder": "Descreva o que você quer fazer...",
+        "send_chat": "Enviar (Chat)",
+        "reload_modules": "Recarregar módulos",
+        "export_demo1": "Exportar demo1",
+        "refresh_status": "Atualizar status",
+        "btn_builder": "🛠️ Criar sua Web / App",
+        "btn_scientific": "🔬 Científico",
+        "admin_ops": "Operações avançadas (Admin)",
+        "task_queue_title": "### Fila de tarefas",
+        "task_cmd_label": "Comando da fila",
+        "task_cmd_placeholder": "Ex: revisar status interno",
+        "priority_label": "Prioridade (1=alta · 20=baixa)",
+        "enqueue_task": "Enfileirar tarefa (fila)",
+        "orchestrator_title": "### v29 — Orquestrador de Projetos",
+        "project_name_label": "Novo projeto",
+        "project_name_placeholder": "Nome do projeto",
+        "create_project": "Criar projeto",
+        "project_label": "Projeto",
+        "task_command_label": "Nova tarefa (comando)",
+        "task_command_placeholder": "Ex: revisar status interno",
+        "add_task": "Adicionar tarefa",
+        "task_label": "Tarefa",
+        "run_task": "Executar tarefa (policy/freeze)",
+        "orchestrator_output": "Saída do orquestrador",
+        "status_json": "Status JSON",
+        "logs_last_n": "Últimos logs N",
+        "tail_logs": "Logs finais",
+        "refresh_logs": "Atualizar logs",
+        "export_demo1_label": "Exportar demo1",
+        "snapshots_title": "### v28 — Snapshots (v28.3 inclui plugins)",
+        "snapshot_name_label": "Nome do snapshot",
+        "create_snapshot": "Criar Snapshot",
+        "restore_snapshot": "Restaurar Snapshot",
+        "list_snapshots": "Listar Snapshots",
+        "export_snapshot": "Exportar Snapshot",
+        "snapshot_output": "Saída do snapshot",
+        "import_snapshot_json": "Importar Snapshot JSON",
+        "import_snapshot": "Importar Snapshot",
+        "replica_title": "### v28.2 — Réplica portátil (1 JSON)",
+        "replica_name_label": "Nome da réplica",
+        "export_replica": "Exportar réplica (JSON)",
+        "replica_json": "Réplica JSON",
+        "import_replica_json": "Importar réplica JSON",
+        "import_replica_apply": "Importar réplica (aplicar)",
+        "replica_import_result": "Resultado da importação",
+        "home_button": "⬅️ Início",
+        "builder_title": "## Criar sua Web / App / Sistema",
+        "builder_subtitle": "Desenhe e estruture projetos em diferentes tecnologias.",
+        "builder_tags": "**Web · Móvel · Desktop · Embarcados**  \n(Python · Java · C++ · JavaScript · Arduino · e mais)",
+        "builder_desc": (
+            "Aether pode ajudar você a desenhar projetos e gerar código base "
+            "para testar e continuar o desenvolvimento no seu próprio ambiente."
+        ),
+        "project_id_label": "ID do projeto",
+        "export_zip_label": "Exportar ZIP",
+        "export_button": "Exportar",
+        "builder_chat_label": "Chat Builder",
+        "builder_message_placeholder": "Descreva o que você quer construir...",
+        "send_button": "Enviar",
+        "scientific_title": "## Modo Científico",
+        "scientific_subtitle": "Resolva problemas reais de ciência e pesquisa com método e clareza",
+        "scientific_desc": (
+            "Aether ajuda você a estruturar pesquisas científicas, analisar métodos, "
+            "definir modelos e explorar cenários para tomar melhores decisões antes "
+            "de simular ou experimentar."
+        ),
+        "scientific_chat_label": "Chat Científico",
+        "scientific_message_placeholder": "Descreva sua pergunta científica...",
+        "config_title": "## Configurações",
+        "config_account_title": "### Conta",
+        "account_status_label": "Status",
+        "account_status_guest": "Convidado",
+        "account_status_admin": "Admin",
+        "username_label": "Usuário",
+        "username_placeholder": "Seu usuário",
+        "pin_label": "PIN / Código",
+        "pin_placeholder": "Código de acesso",
+        "login": "Login",
+        "logout": "Sair",
+        "config_language_title": "### Idioma",
+        "language_selector_label": "Selecionar idioma",
+        "config_plans_title": "### Planos e preços",
+        "plans_accordion_label": "Planos",
+        "plan_free_text": (
+            "### FREE — S/ 0\n"
+            "**CRIAR**\n"
+            "- 1 projeto ativo\n"
+            "- Guia passo a passo (ideia → estrutura → checklist)\n"
+            "- Código base simples (quando aplicável)\n"
+            "- Exportar MD (documento editável)\n\n"
+            "**CIENTÍFICO**\n"
+            "- Método científico guiado (problema → hipótese → método)\n"
+            "- Cenários básicos\n"
+            "- Conclusões e limitações claras\n"
+            "- Exportar MD (documento editável)\n\n"
+            "**EXTRAS**\n"
+            "- Chat e projeto persistente\n"
+            "- Interface simples e fácil de usar"
+        ),
+        "plan_pro_text": (
+            "### PRO — S/ 49 (promo) → depois S/ 149\n"
+            "**CRIAR**\n"
+            "- Até 5 projetos\n"
+            "- Plano mais detalhado (arquitetura, módulos, fluxo)\n"
+            "- Código base mais completo\n"
+            "- Exportar PDF + MD (documento editável)\n\n"
+            "**CIENTÍFICO**\n"
+            "- Cenários comparativos\n"
+            "- Análise mais profunda e organizada\n"
+            "- Melhor continuidade do projeto\n"
+            "- Exportar PDF + MD (documento editável)\n\n"
+            "**EXTRAS**\n"
+            "- Histórico ampliado\n"
+            "- Melhor organização de projetos"
+        ),
+        "plan_lab_text": (
+            "### LAB — S/ 299 (promo) → depois S/ 799\n"
+            "**CRIAR**\n"
+            "- Projetos ilimitados\n"
+            "- Entregáveis completos (documentação, checklist, estrutura para equipe)\n"
+            "- Código base avançado (quando aplicável)\n"
+            "- Exportação avançada (ZIP quando aplicável)\n\n"
+            "**CIENTÍFICO**\n"
+            "- Estudos completos e reproduzíveis\n"
+            "- Cenários complexos\n"
+            "- Maior rigor e rastreabilidade\n"
+            "- Exportação avançada (quando aplicável)\n\n"
+            "**EXTRAS**\n"
+            "- Histórico completo\n"
+            "- Prioridade de recursos"
+        ),
+        "plan_upgrade": "Atualizar (em breve)",
+        "plan_footer": (
+            "Aether ajuda você a pensar, analisar e criar com ordem "
+            "para continuar o trabalho no seu próprio ambiente."
+        ),
+    },
+    "pt-PT": {
+        "app_title": "AETHER CORE — HF SAFE",
+        "header_beta": "Aether — Beta fechada",
+        "boot_label": "Boot",
+        "new_chat": "Novo chat",
+        "chats": "Chats",
+        "chat_label": "Chat Aether",
+        "message_label": "Mensagem",
+        "message_placeholder": "Descreve o que queres fazer...",
+        "send_chat": "Enviar (Chat)",
+        "reload_modules": "Recarregar módulos",
+        "export_demo1": "Exportar demo1",
+        "refresh_status": "Atualizar estado",
+        "btn_builder": "🛠️ Criar a tua Web / App",
+        "btn_scientific": "🔬 Científico",
+        "admin_ops": "Operações avançadas (Admin)",
+        "task_queue_title": "### Fila de tarefas",
+        "task_cmd_label": "Comando da fila",
+        "task_cmd_placeholder": "Ex: rever estado interno",
+        "priority_label": "Prioridade (1=alta · 20=baixa)",
+        "enqueue_task": "Enfileirar tarefa (fila)",
+        "orchestrator_title": "### v29 — Orquestrador de Projetos",
+        "project_name_label": "Novo projeto",
+        "project_name_placeholder": "Nome do projeto",
+        "create_project": "Criar projeto",
+        "project_label": "Projeto",
+        "task_command_label": "Nova tarefa (comando)",
+        "task_command_placeholder": "Ex: rever estado interno",
+        "add_task": "Adicionar tarefa",
+        "task_label": "Tarefa",
+        "run_task": "Executar tarefa (policy/freeze)",
+        "orchestrator_output": "Saída do orquestrador",
+        "status_json": "Status JSON",
+        "logs_last_n": "Últimos logs N",
+        "tail_logs": "Logs finais",
+        "refresh_logs": "Atualizar logs",
+        "export_demo1_label": "Exportar demo1",
+        "snapshots_title": "### v28 — Snapshots (v28.3 inclui plugins)",
+        "snapshot_name_label": "Nome do snapshot",
+        "create_snapshot": "Criar Snapshot",
+        "restore_snapshot": "Restaurar Snapshot",
+        "list_snapshots": "Listar Snapshots",
+        "export_snapshot": "Exportar Snapshot",
+        "snapshot_output": "Saída do snapshot",
+        "import_snapshot_json": "Importar Snapshot JSON",
+        "import_snapshot": "Importar Snapshot",
+        "replica_title": "### v28.2 — Réplica portátil (1 JSON)",
+        "replica_name_label": "Nome da réplica",
+        "export_replica": "Exportar réplica (JSON)",
+        "replica_json": "Réplica JSON",
+        "import_replica_json": "Importar réplica JSON",
+        "import_replica_apply": "Importar réplica (aplicar)",
+        "replica_import_result": "Resultado da importação",
+        "home_button": "⬅️ Início",
+        "builder_title": "## Criar a tua Web / App / Sistema",
+        "builder_subtitle": "Desenha e estrutura projetos em diferentes tecnologias.",
+        "builder_tags": "**Web · Móvel · Desktop · Embarcados**  \n(Python · Java · C++ · JavaScript · Arduino · e mais)",
+        "builder_desc": (
+            "Aether pode ajudar-te a desenhar projetos e gerar código base "
+            "para testares e continuares o desenvolvimento no teu próprio ambiente."
+        ),
+        "project_id_label": "ID do projeto",
+        "export_zip_label": "Exportar ZIP",
+        "export_button": "Exportar",
+        "builder_chat_label": "Chat Builder",
+        "builder_message_placeholder": "Descreve o que queres construir...",
+        "send_button": "Enviar",
+        "scientific_title": "## Modo Científico",
+        "scientific_subtitle": "Resolve problemas reais de ciência e investigação com método e clareza",
+        "scientific_desc": (
+            "Aether ajuda-te a estruturar investigações científicas, analisar métodos, "
+            "definir modelos e explorar cenários para tomares melhores decisões antes "
+            "de simular ou experimentar."
+        ),
+        "scientific_chat_label": "Chat Científico",
+        "scientific_message_placeholder": "Descreve a tua questão científica...",
+        "config_title": "## Configurações",
+        "config_account_title": "### Conta",
+        "account_status_label": "Estado",
+        "account_status_guest": "Convidado",
+        "account_status_admin": "Admin",
+        "username_label": "Utilizador",
+        "username_placeholder": "O teu utilizador",
+        "pin_label": "PIN / Código",
+        "pin_placeholder": "Código de acesso",
+        "login": "Login",
+        "logout": "Terminar sessão",
+        "config_language_title": "### Idioma",
+        "language_selector_label": "Selecionar idioma",
+        "config_plans_title": "### Planos e preços",
+        "plans_accordion_label": "Planos",
+        "plan_free_text": (
+            "### FREE — S/ 0\n"
+            "**CRIAR**\n"
+            "- 1 projeto ativo\n"
+            "- Guia passo a passo (ideia → estrutura → checklist)\n"
+            "- Código base simples (quando aplicável)\n"
+            "- Exportar MD (documento editável)\n\n"
+            "**CIENTÍFICO**\n"
+            "- Método científico guiado (problema → hipótese → método)\n"
+            "- Cenários básicos\n"
+            "- Conclusões e limitações claras\n"
+            "- Exportar MD (documento editável)\n\n"
+            "**EXTRAS**\n"
+            "- Chat e projeto persistente\n"
+            "- Interface simples e fácil de usar"
+        ),
+        "plan_pro_text": (
+            "### PRO — S/ 49 (promo) → depois S/ 149\n"
+            "**CRIAR**\n"
+            "- Até 5 projetos\n"
+            "- Plano mais detalhado (arquitetura, módulos, fluxo)\n"
+            "- Código base mais completo\n"
+            "- Exportar PDF + MD (documento editável)\n\n"
+            "**CIENTÍFICO**\n"
+            "- Cenários comparativos\n"
+            "- Análise mais profunda e organizada\n"
+            "- Melhor continuidade do projeto\n"
+            "- Exportar PDF + MD (documento editável)\n\n"
+            "**EXTRAS**\n"
+            "- Histórico ampliado\n"
+            "- Melhor organização de projetos"
+        ),
+        "plan_lab_text": (
+            "### LAB — S/ 299 (promo) → depois S/ 799\n"
+            "**CRIAR**\n"
+            "- Projetos ilimitados\n"
+            "- Entregáveis completos (documentação, checklist, estrutura para equipa)\n"
+            "- Código base avançado (quando aplicável)\n"
+            "- Exportação avançada (ZIP quando aplicável)\n\n"
+            "**CIENTÍFICO**\n"
+            "- Estudos completos e reproduzíveis\n"
+            "- Cenários complexos\n"
+            "- Maior rigor e rastreabilidade\n"
+            "- Exportação avançada (quando aplicável)\n\n"
+            "**EXTRAS**\n"
+            "- Histórico completo\n"
+            "- Prioridade de recursos"
+        ),
+        "plan_upgrade": "Atualizar (em breve)",
+        "plan_footer": (
+            "Aether ajuda-te a pensar, analisar e criar com ordem "
+            "para continuares o trabalho no teu próprio ambiente."
+        ),
+    },
+}
+
+
+def normalize_lang(lang: Optional[str]) -> str:
+    if not lang:
+        return "es"
+    norm = str(lang).replace("_", "-").strip()
+    lower = norm.lower()
+    if lower.startswith("es"):
+        return "es"
+    if lower.startswith("en"):
+        return "en"
+    if lower.startswith("pt-br"):
+        return "pt-BR"
+    if lower.startswith("pt-pt"):
+        return "pt-PT"
+    if lower.startswith("pt"):
+        return "pt-BR"
+    return "es"
+
+
+def detect_language_from_header(accept_language: Optional[str]) -> str:
+    if not accept_language:
+        return "es"
+    for part in accept_language.split(","):
+        code = part.split(";")[0].strip()
+        if not code:
+            continue
+        normalized = normalize_lang(code)
+        if normalized in SUPPORTED_LANGS:
+            return normalized
+    return "es"
+
+
+def t(lang: str, key: str) -> str:
+    resolved = normalize_lang(lang)
+    return LANG.get(resolved, LANG["es"]).get(key, LANG["es"].get(key, key))
+
 # -----------------------------
 # TIME (timezone-aware)
 # -----------------------------
@@ -3592,12 +4218,121 @@ def start_aether() -> str:
 # GRADIO UI (HF SAFE)
 # -----------------------------
 
-def _account_status_text(account_state: Dict[str, str]) -> str:
-    status = (account_state or {}).get("status") or "Invitado"
+def _account_status_text(account_state: Dict[str, str], lang: str = "es") -> str:
+    status = (account_state or {}).get("status") or ""
     username = (account_state or {}).get("username") or ""
-    if status == "Admin" and username:
-        return f"**Estado:** {status} ({username})"
-    return f"**Estado:** {status}"
+    if isinstance(status, str) and status.lower() == "admin":
+        status_text = t(lang, "account_status_admin")
+    else:
+        status_text = t(lang, "account_status_guest")
+    if username and isinstance(status, str) and status.lower() == "admin":
+        return f"**{t(lang, 'account_status_label')}:** {status_text} ({username})"
+    return f"**{t(lang, 'account_status_label')}:** {status_text}"
+
+
+def ui_apply_language(lang: str, account_state: Dict[str, str]) -> Tuple[Any, ...]:
+    resolved = normalize_lang(lang)
+    return (
+        resolved,
+        gr.update(value=f"<div id='aether-header'><div>{t(resolved, 'header_beta')}</div></div>"),
+        gr.update(label=t(resolved, "boot_label")),
+        gr.update(value=t(resolved, "new_chat")),
+        gr.update(label=t(resolved, "chats")),
+        gr.update(label=t(resolved, "chat_label")),
+        gr.update(label=t(resolved, "message_label"), placeholder=t(resolved, "message_placeholder")),
+        gr.update(value=t(resolved, "send_chat")),
+        gr.update(value=t(resolved, "reload_modules")),
+        gr.update(value=t(resolved, "export_demo1")),
+        gr.update(value=t(resolved, "refresh_status")),
+        gr.update(value=t(resolved, "btn_builder")),
+        gr.update(value=t(resolved, "btn_scientific")),
+        gr.update(label=t(resolved, "admin_ops")),
+        gr.update(value=t(resolved, "task_queue_title")),
+        gr.update(label=t(resolved, "task_cmd_label"), placeholder=t(resolved, "task_cmd_placeholder")),
+        gr.update(label=t(resolved, "priority_label")),
+        gr.update(value=t(resolved, "enqueue_task")),
+        gr.update(value=t(resolved, "orchestrator_title")),
+        gr.update(label=t(resolved, "project_name_label"), placeholder=t(resolved, "project_name_placeholder")),
+        gr.update(value=t(resolved, "create_project")),
+        gr.update(label=t(resolved, "project_label")),
+        gr.update(label=t(resolved, "task_command_label"), placeholder=t(resolved, "task_command_placeholder")),
+        gr.update(value=t(resolved, "add_task")),
+        gr.update(label=t(resolved, "task_label")),
+        gr.update(value=t(resolved, "run_task")),
+        gr.update(label=t(resolved, "orchestrator_output")),
+        gr.update(label=t(resolved, "status_json")),
+        gr.update(label=t(resolved, "logs_last_n")),
+        gr.update(label=t(resolved, "tail_logs")),
+        gr.update(value=t(resolved, "refresh_logs")),
+        gr.update(label=t(resolved, "export_demo1_label")),
+        gr.update(value=t(resolved, "snapshots_title")),
+        gr.update(label=t(resolved, "snapshot_name_label")),
+        gr.update(value=t(resolved, "create_snapshot")),
+        gr.update(value=t(resolved, "restore_snapshot")),
+        gr.update(value=t(resolved, "list_snapshots")),
+        gr.update(value=t(resolved, "export_snapshot")),
+        gr.update(label=t(resolved, "snapshot_output")),
+        gr.update(label=t(resolved, "import_snapshot_json")),
+        gr.update(value=t(resolved, "import_snapshot")),
+        gr.update(value=t(resolved, "replica_title")),
+        gr.update(label=t(resolved, "replica_name_label")),
+        gr.update(value=t(resolved, "export_replica")),
+        gr.update(label=t(resolved, "replica_json")),
+        gr.update(label=t(resolved, "import_replica_json")),
+        gr.update(value=t(resolved, "import_replica_apply")),
+        gr.update(label=t(resolved, "replica_import_result")),
+        gr.update(value=t(resolved, "home_button")),
+        gr.update(value=t(resolved, "builder_title")),
+        gr.update(value=t(resolved, "builder_subtitle")),
+        gr.update(value=t(resolved, "builder_tags")),
+        gr.update(value=t(resolved, "builder_desc")),
+        gr.update(label=t(resolved, "project_id_label")),
+        gr.update(label=t(resolved, "export_zip_label")),
+        gr.update(value=t(resolved, "export_button")),
+        gr.update(value=t(resolved, "new_chat")),
+        gr.update(label=t(resolved, "chats")),
+        gr.update(label=t(resolved, "builder_chat_label")),
+        gr.update(label=t(resolved, "message_label"), placeholder=t(resolved, "builder_message_placeholder")),
+        gr.update(value=t(resolved, "send_button")),
+        gr.update(value=t(resolved, "home_button")),
+        gr.update(value=t(resolved, "scientific_title")),
+        gr.update(value=t(resolved, "scientific_subtitle")),
+        gr.update(value=t(resolved, "scientific_desc")),
+        gr.update(value=t(resolved, "new_chat")),
+        gr.update(label=t(resolved, "chats")),
+        gr.update(label=t(resolved, "scientific_chat_label")),
+        gr.update(label=t(resolved, "message_label"), placeholder=t(resolved, "scientific_message_placeholder")),
+        gr.update(value=t(resolved, "send_button")),
+        gr.update(value=t(resolved, "home_button")),
+        gr.update(value=t(resolved, "config_title")),
+        gr.update(value=t(resolved, "config_account_title")),
+        gr.update(value=_account_status_text(account_state, resolved)),
+        gr.update(label=t(resolved, "username_label"), placeholder=t(resolved, "username_placeholder")),
+        gr.update(label=t(resolved, "pin_label"), placeholder=t(resolved, "pin_placeholder")),
+        gr.update(value=t(resolved, "login")),
+        gr.update(value=t(resolved, "logout")),
+        gr.update(value=t(resolved, "config_language_title")),
+        gr.update(label=t(resolved, "language_selector_label"), choices=LANGUAGE_CHOICES, value=resolved),
+        gr.update(value=t(resolved, "config_plans_title")),
+        gr.update(label=t(resolved, "plans_accordion_label")),
+        gr.update(value=t(resolved, "plan_free_text")),
+        gr.update(value=t(resolved, "plan_pro_text")),
+        gr.update(value=t(resolved, "plan_lab_text")),
+        gr.update(value=t(resolved, "plan_upgrade")),
+        gr.update(value=t(resolved, "plan_footer")),
+        gr.update(value="<div style='font-size: 0.85em; color: #666;'>inf.aether@outlook.com</div>"),
+    )
+
+
+def ui_init_language(account_state: Dict[str, str], request: gr.Request) -> Tuple[Any, ...]:
+    accept_language = ""
+    if request:
+        try:
+            accept_language = dict(request.headers).get("accept-language", "")
+        except Exception:
+            accept_language = ""
+    detected = detect_language_from_header(accept_language)
+    return ui_apply_language(detected, account_state)
 
 def _admin_env() -> Tuple[bool, str, str]:
     pin = os.environ.get("AETHER_ADMIN_PIN", "").strip()
@@ -3623,7 +4358,7 @@ def ui_set_view(view: str) -> Tuple[gr.update, gr.update, gr.update, gr.update, 
     )
 
 def ui_login(
-    username: str, pin: str, account_state: Dict[str, str]
+    username: str, pin: str, account_state: Dict[str, str], lang: str
 ) -> Tuple[bool, Dict[str, str], str, gr.update, gr.update, gr.update, gr.update, gr.update]:
     username = (username or "").strip()
     pin = (pin or "").strip()
@@ -3641,20 +4376,20 @@ def ui_login(
     else:
         new_state["status"] = "Invitado"
         new_state["username"] = ""
-    return (is_admin, new_state, _account_status_text(new_state), *_admin_visibility_updates(is_admin))
+    return (is_admin, new_state, _account_status_text(new_state, lang), *_admin_visibility_updates(is_admin))
 
 def ui_logout(
-    account_state: Dict[str, str]
+    account_state: Dict[str, str], lang: str
 ) -> Tuple[bool, Dict[str, str], str, gr.update, gr.update, gr.update, gr.update, gr.update]:
     new_state = dict(account_state or {})
     new_state["status"] = "Invitado"
     new_state["username"] = ""
-    return (False, new_state, _account_status_text(new_state), *_admin_visibility_updates(False))
+    return (False, new_state, _account_status_text(new_state, lang), *_admin_visibility_updates(False))
 
 def build_ui() -> gr.Blocks:
     ensure_projects()
     with gr.Blocks(
-        title="AETHER CORE — HF SAFE",
+        title=t("es", "app_title"),
         css="""
         #aether-header .aether-header-line { color: #8a8a8a; font-size: 12px; }
         #aether-gear button {
@@ -3665,7 +4400,7 @@ def build_ui() -> gr.Blocks:
         """,
     ) as demo:
         view_state = gr.State("home")
-        language_state = gr.State("ES")
+        language_state = gr.State("es")
         account_state = gr.State({"status": "Invitado", "username": ""})
         is_admin_state = gr.State(False)
         builder_initial_history = load_active("builder")
@@ -3675,10 +4410,8 @@ def build_ui() -> gr.Blocks:
 
         with gr.Row():
             with gr.Column(scale=1, min_width=160):
-                gr.HTML(
-                    "<div id='aether-header'>"
-                    "<div>Aether — Beta cerrada</div>"
-                    "</div>"
+                header_html = gr.HTML(
+                    f"<div id='aether-header'><div>{t('es', 'header_beta')}</div></div>"
                 )
             with gr.Column(scale=1, min_width=120):
                 btn_open_config = gr.Button("⚙️", size="sm", elem_id="aether-gear")
@@ -3686,224 +4419,294 @@ def build_ui() -> gr.Blocks:
         with gr.Column(visible=True) as home_view:
             with gr.Row():
                 with gr.Column(scale=5):
-                    boot_msg = gr.Textbox(label="Boot", lines=1, visible=False)
+                    boot_msg = gr.Textbox(label=t("es", "boot_label"), lines=1, visible=False)
 
                     with gr.Row():
-                        btn_new_chat = gr.Button("Nuevo chat", size="sm")
+                        btn_new_chat = gr.Button(t("es", "new_chat"), size="sm")
                         chat_selector = gr.Dropdown(
-                            label="Chats",
+                            label=t("es", "chats"),
                             choices=["Chat 1"],
                             value="Chat 1",
                         )
 
-                    chat = gr.Chatbot(label="AETHER Chat", height=420, value=[])
+                    chat = gr.Chatbot(label=t("es", "chat_label"), height=420, value=[])
                     chat_state = gr.State([])
                     user_msg = gr.Textbox(
-                        label="Mensaje",
-                        placeholder="Describe lo que quieres hacer...",
+                        label=t("es", "message_label"),
+                        placeholder=t("es", "message_placeholder"),
                         lines=2,
                     )
 
                     with gr.Row():
-                        btn_send = gr.Button("Enviar (Chat)")
-                        btn_reload = gr.Button("Reload Modules", visible=False)
-                        btn_export_demo = gr.Button("Export demo1", visible=False)
-                        btn_refresh_status = gr.Button("Refresh Status", visible=False)
+                        btn_send = gr.Button(t("es", "send_chat"))
+                        btn_reload = gr.Button(t("es", "reload_modules"), visible=False)
+                        btn_export_demo = gr.Button(t("es", "export_demo1"), visible=False)
+                        btn_refresh_status = gr.Button(t("es", "refresh_status"), visible=False)
 
                     with gr.Row():
-                        btn_builder = gr.Button("🛠️ Crear tu Web / App", variant="primary")
-                        btn_scientific = gr.Button("🔬 Científico", variant="primary")
+                        btn_builder = gr.Button(t("es", "btn_builder"), variant="primary")
+                        btn_scientific = gr.Button(t("es", "btn_scientific"), variant="primary")
 
-                    with gr.Accordion("Operaciones avanzadas (Admin)", open=False, visible=False) as admin_ops:
-                        gr.Markdown("### Cola de tareas")
-                        task_cmd = gr.Textbox(label="Comando para cola", placeholder="Ej: revisar estado interno", lines=1)
-                        prio = gr.Slider(1, 20, value=5, step=1, label="Prioridad (1=alta · 20=baja)")
-                        btn_enqueue = gr.Button("Enqueue Task (cola)")
+                    with gr.Accordion(t("es", "admin_ops"), open=False, visible=False) as admin_ops:
+                        task_queue_md = gr.Markdown(t("es", "task_queue_title"))
+                        task_cmd = gr.Textbox(
+                            label=t("es", "task_cmd_label"),
+                            placeholder=t("es", "task_cmd_placeholder"),
+                            lines=1,
+                        )
+                        prio = gr.Slider(1, 20, value=5, step=1, label=t("es", "priority_label"))
+                        btn_enqueue = gr.Button(t("es", "enqueue_task"))
 
                         gr.Markdown("---")
-                        gr.Markdown("### v29 — Project Orchestrator")
-                        project_name = gr.Textbox(label="Nuevo proyecto", placeholder="Nombre del proyecto", lines=1)
-                        btn_add_project = gr.Button("Crear proyecto")
-                        project_selector = gr.Dropdown(label="Proyecto", choices=_project_choices(), value=_default_project_value())
-                        task_command = gr.Textbox(label="Nueva tarea (comando)", placeholder="Ej: revisar estado interno", lines=1)
-                        btn_add_task = gr.Button("Agregar tarea")
+                        project_orchestrator_md = gr.Markdown(t("es", "orchestrator_title"))
+                        project_name = gr.Textbox(
+                            label=t("es", "project_name_label"),
+                            placeholder=t("es", "project_name_placeholder"),
+                            lines=1,
+                        )
+                        btn_add_project = gr.Button(t("es", "create_project"))
+                        project_selector = gr.Dropdown(
+                            label=t("es", "project_label"),
+                            choices=_project_choices(),
+                            value=_default_project_value(),
+                        )
+                        task_command = gr.Textbox(
+                            label=t("es", "task_command_label"),
+                            placeholder=t("es", "task_command_placeholder"),
+                            lines=1,
+                        )
+                        btn_add_task = gr.Button(t("es", "add_task"))
                         _initial_pid = _default_project_value() or "default"
                         _initial_tasks = _task_choices(_initial_pid)
                         _initial_task_value = _initial_tasks[0][1] if _initial_tasks else None
-                        task_selector = gr.Dropdown(label="Tarea", choices=_initial_tasks, value=_initial_task_value)
-                        btn_run_task = gr.Button("Run Task (policy/freeze)")
-                        orchestrator_out = gr.Code(label="Orchestrator output", language="json")
+                        task_selector = gr.Dropdown(
+                            label=t("es", "task_label"),
+                            choices=_initial_tasks,
+                            value=_initial_task_value,
+                        )
+                        btn_run_task = gr.Button(t("es", "run_task"))
+                        orchestrator_out = gr.Code(label=t("es", "orchestrator_output"), language="json")
 
                         gr.Markdown("---")
-                        status = gr.Code(label="Status JSON", language="json")
+                        status = gr.Code(label=t("es", "status_json"), language="json")
 
-                        logs_n = gr.Slider(10, 200, value=50, step=10, label="Logs últimos N")
-                        logs = gr.Textbox(label="Tail Logs", lines=12)
-                        btn_refresh_logs = gr.Button("Refresh Logs")
+                        logs_n = gr.Slider(10, 200, value=50, step=10, label=t("es", "logs_last_n"))
+                        logs = gr.Textbox(label=t("es", "tail_logs"), lines=12)
+                        btn_refresh_logs = gr.Button(t("es", "refresh_logs"))
 
-                        export_out = gr.Code(label="Export demo1", language="json")
+                        export_out = gr.Code(label=t("es", "export_demo1_label"), language="json")
 
                         gr.Markdown("---")
-                        gr.Markdown("### v28 — Snapshots (v28.3 incluye plugins)")
-                        snap_name = gr.Textbox(label="Snapshot name", value="demo1", lines=1)
+                        snapshots_md = gr.Markdown(t("es", "snapshots_title"))
+                        snap_name = gr.Textbox(label=t("es", "snapshot_name_label"), value="demo1", lines=1)
                         with gr.Row():
-                            btn_snap_create = gr.Button("Create Snapshot")
-                            btn_snap_restore = gr.Button("Restore Snapshot")
-                            btn_snap_list = gr.Button("List Snapshots")
-                            btn_snap_export = gr.Button("Export Snapshot")
-                        snap_out = gr.Code(label="Snapshot output", language="json")
-                        snap_import_txt = gr.Textbox(label="Import Snapshot JSON", lines=6)
-                        btn_snap_import = gr.Button("Import Snapshot")
+                            btn_snap_create = gr.Button(t("es", "create_snapshot"))
+                            btn_snap_restore = gr.Button(t("es", "restore_snapshot"))
+                            btn_snap_list = gr.Button(t("es", "list_snapshots"))
+                            btn_snap_export = gr.Button(t("es", "export_snapshot"))
+                        snap_out = gr.Code(label=t("es", "snapshot_output"), language="json")
+                        snap_import_txt = gr.Textbox(label=t("es", "import_snapshot_json"), lines=6)
+                        btn_snap_import = gr.Button(t("es", "import_snapshot"))
 
                         gr.Markdown("---")
-                        gr.Markdown("### v28.2 — Réplica portable (1 JSON)")
-                        replica_name = gr.Textbox(label="Replica name", value="replica", lines=1)
-                        btn_replica_export = gr.Button("Export Replica (JSON)")
-                        replica_out = gr.Code(label="Replica JSON", language="json")
-                        replica_in = gr.Textbox(label="Import Replica JSON", lines=8)
-                        btn_replica_import = gr.Button("Import Replica (apply)")
-                        replica_result = gr.Code(label="Replica import result", language="json")
+                        replica_md = gr.Markdown(t("es", "replica_title"))
+                        replica_name = gr.Textbox(label=t("es", "replica_name_label"), value="replica", lines=1)
+                        btn_replica_export = gr.Button(t("es", "export_replica"))
+                        replica_out = gr.Code(label=t("es", "replica_json"), language="json")
+                        replica_in = gr.Textbox(label=t("es", "import_replica_json"), lines=8)
+                        btn_replica_import = gr.Button(t("es", "import_replica_apply"))
+                        replica_result = gr.Code(label=t("es", "replica_import_result"), language="json")
 
         with gr.Column(visible=False) as builder_view:
-            btn_home_from_builder = gr.Button("⬅️ Home")
-            gr.Markdown("## Crear tu Web / App / Sistema")
-            gr.Markdown("Diseña y estructura proyectos en distintas tecnologías.")
-            gr.Markdown("**Web · Móvil · Escritorio · Embebidos**  \n(Python · Java · C++ · JavaScript · Arduino · y más)")
-            gr.Markdown(
-                "Aether puede ayudarte a diseñar proyectos y generar código base, "
-                "para que los pruebes y continúes el desarrollo en tu propio entorno."
-            )
-            builder_project_id = gr.Textbox(label="Project ID", value="", interactive=False)
-            builder_export_file = gr.File(label="Export ZIP", interactive=False)
+            btn_home_from_builder = gr.Button(t("es", "home_button"))
+            builder_title_md = gr.Markdown(t("es", "builder_title"))
+            builder_subtitle_md = gr.Markdown(t("es", "builder_subtitle"))
+            builder_tags_md = gr.Markdown(t("es", "builder_tags"))
+            builder_desc_md = gr.Markdown(t("es", "builder_desc"))
+            builder_project_id = gr.Textbox(label=t("es", "project_id_label"), value="", interactive=False)
+            builder_export_file = gr.File(label=t("es", "export_zip_label"), interactive=False)
             with gr.Row():
-                btn_builder_export = gr.Button("Exportar")
+                btn_builder_export = gr.Button(t("es", "export_button"))
             with gr.Row():
                 with gr.Column(scale=1, min_width=180):
-                    btn_builder_new_chat = gr.Button("Nuevo chat", size="sm")
+                    btn_builder_new_chat = gr.Button(t("es", "new_chat"), size="sm")
                     builder_chat_selector = gr.Radio(
-                        label="Chats",
+                        label=t("es", "chats"),
                         choices=_chat_choices(builder_saved_chats),
                         value=None,
                     )
                 with gr.Column(scale=4):
-                    builder_chat = gr.Chatbot(label="Builder Chat", height=420, value=builder_initial_history)
+                    builder_chat = gr.Chatbot(
+                        label=t("es", "builder_chat_label"),
+                        height=420,
+                        value=builder_initial_history,
+                    )
                     builder_msg = gr.Textbox(
-                        label="Mensaje",
-                        placeholder="Describe lo que quieres construir...",
+                        label=t("es", "message_label"),
+                        placeholder=t("es", "builder_message_placeholder"),
                         lines=2,
                     )
                     with gr.Row():
-                        btn_builder_send = gr.Button("Enviar")
+                        btn_builder_send = gr.Button(t("es", "send_button"))
             builder_chat_state = gr.State(builder_initial_history)
             builder_chats_state = gr.State(builder_saved_chats)
 
         with gr.Column(visible=False) as scientific_view:
-            btn_home_from_scientific = gr.Button("⬅️ Home")
-            gr.Markdown("## Modo Científico")
-            gr.Markdown("Resuelve problemas reales de ciencia e investigación con método y claridad")
-            gr.Markdown(
-                "Aether te ayuda a estructurar investigaciones científicas, "
-                "analizar métodos, definir modelos y explorar escenarios, "
-                "para que tomes mejores decisiones antes de simular o experimentar."
-            )
+            btn_home_from_scientific = gr.Button(t("es", "home_button"))
+            scientific_title_md = gr.Markdown(t("es", "scientific_title"))
+            scientific_subtitle_md = gr.Markdown(t("es", "scientific_subtitle"))
+            scientific_desc_md = gr.Markdown(t("es", "scientific_desc"))
             with gr.Row():
                 with gr.Column(scale=1, min_width=180):
-                    btn_scientific_new_chat = gr.Button("Nuevo chat", size="sm")
+                    btn_scientific_new_chat = gr.Button(t("es", "new_chat"), size="sm")
                     scientific_chat_selector = gr.Radio(
-                        label="Chats",
+                        label=t("es", "chats"),
                         choices=_chat_choices(scientific_saved_chats),
                         value=None,
                     )
                 with gr.Column(scale=4):
-                    scientific_chat = gr.Chatbot(label="Scientific Chat", height=420, value=scientific_initial_history)
+                    scientific_chat = gr.Chatbot(
+                        label=t("es", "scientific_chat_label"),
+                        height=420,
+                        value=scientific_initial_history,
+                    )
                     scientific_msg = gr.Textbox(
-                        label="Mensaje",
-                        placeholder="Describe tu consulta científica...",
+                        label=t("es", "message_label"),
+                        placeholder=t("es", "scientific_message_placeholder"),
                         lines=2,
                     )
                     with gr.Row():
-                        btn_scientific_send = gr.Button("Enviar")
+                        btn_scientific_send = gr.Button(t("es", "send_button"))
             scientific_chat_state = gr.State(scientific_initial_history)
             scientific_chats_state = gr.State(scientific_saved_chats)
 
         with gr.Column(visible=False) as config_view:
-            btn_home_from_config = gr.Button("⬅️ Home")
-            gr.Markdown("## Configuración")
+            btn_home_from_config = gr.Button(t("es", "home_button"))
+            config_title_md = gr.Markdown(t("es", "config_title"))
 
-            gr.Markdown("### Cuenta")
-            account_status = gr.Markdown(_account_status_text({"status": "Invitado", "username": ""}))
-            account_username = gr.Textbox(label="Usuario", placeholder="Tu usuario", lines=1)
-            account_pin = gr.Textbox(label="Pin / Código", placeholder="Código de acceso", type="password", lines=1)
-            btn_login = gr.Button("Login")
-            btn_logout = gr.Button("Cerrar sesión")
-
-            gr.Markdown("---")
-            gr.Markdown("### Idioma")
-            language_selector = gr.Dropdown(label="Selecciona idioma", choices=["ES", "EN", "PT-BR"], value="ES")
+            config_account_md = gr.Markdown(t("es", "config_account_title"))
+            account_status = gr.Markdown(_account_status_text({"status": "Invitado", "username": ""}, "es"))
+            account_username = gr.Textbox(label=t("es", "username_label"), placeholder=t("es", "username_placeholder"), lines=1)
+            account_pin = gr.Textbox(label=t("es", "pin_label"), placeholder=t("es", "pin_placeholder"), type="password", lines=1)
+            btn_login = gr.Button(t("es", "login"))
+            btn_logout = gr.Button(t("es", "logout"))
 
             gr.Markdown("---")
-            gr.Markdown("### Plan y precios")
-            with gr.Accordion("Planes", open=False):
-                with gr.Row():
-                    with gr.Column():
-                        gr.Markdown(
-                            "### FREE — S/ 0\n"
-                            "**CREAR**\n"
-                            "- 1 proyecto activo\n"
-                            "- Guía paso a paso (idea → estructura → checklist)\n"
-                            "- Código base simple (cuando aplique)\n"
-                            "- Export MD (documento editable)\n\n"
-                            "**CIENTÍFICO**\n"
-                            "- Método científico guiado (problema → hipótesis → método)\n"
-                            "- Escenarios básicos\n"
-                            "- Conclusiones y limitaciones claras\n"
-                            "- Export MD (documento editable)\n\n"
-                            "**EXTRAS**\n"
-                            "- Chat y proyecto persistente\n"
-                            "- Interfaz simple y fácil de usar"
-                        )
-                    with gr.Column():
-                        gr.Markdown(
-                            "### PRO — S/ 49 (promo) → luego S/ 149\n"
-                            "**CREAR**\n"
-                            "- Hasta 5 proyectos\n"
-                            "- Plan más detallado (arquitectura, módulos, flujo)\n"
-                            "- Código base más completo\n"
-                            "- Export PDF + MD (documento editable)\n\n"
-                            "**CIENTÍFICO**\n"
-                            "- Escenarios comparativos\n"
-                            "- Análisis más profundo y ordenado\n"
-                            "- Mejor continuidad del proyecto\n"
-                            "- Export PDF + MD (documento editable)\n\n"
-                            "**EXTRAS**\n"
-                            "- Historial ampliado\n"
-                            "- Mejor organización de proyectos"
-                        )
-                    with gr.Column():
-                        gr.Markdown(
-                            "### LAB — S/ 299 (promo) → luego S/ 799\n"
-                            "**CREAR**\n"
-                            "- Proyectos ilimitados\n"
-                            "- Entregables completos (documentación, checklist, estructura para equipo)\n"
-                            "- Código base avanzado (cuando aplique)\n"
-                            "- Export avanzado (ZIP cuando aplique)\n\n"
-                            "**CIENTÍFICO**\n"
-                            "- Estudios completos y reproducibles\n"
-                            "- Escenarios complejos\n"
-                            "- Mayor rigor y trazabilidad\n"
-                            "- Export avanzado (cuando aplique)\n\n"
-                            "**EXTRAS**\n"
-                            "- Historial completo\n"
-                            "- Prioridad de recursos"
-                        )
-            btn_plan_upgrade = gr.Button("Actualizar (próximamente)")
-            gr.Markdown(
-                "Aether te ayuda a pensar, analizar y crear con orden, "
-                "para que continúes el trabajo en tu propio entorno."
+            config_language_md = gr.Markdown(t("es", "config_language_title"))
+            language_selector = gr.Dropdown(
+                label=t("es", "language_selector_label"),
+                choices=LANGUAGE_CHOICES,
+                value="es",
             )
 
             gr.Markdown("---")
-            gr.HTML("<div style='font-size: 0.85em; color: #666;'>inf.aether@outlook.com</div>")
+            config_plans_md = gr.Markdown(t("es", "config_plans_title"))
+            with gr.Accordion(t("es", "plans_accordion_label"), open=False) as plans_accordion:
+                with gr.Row():
+                    with gr.Column():
+                        plan_free_md = gr.Markdown(t("es", "plan_free_text"))
+                    with gr.Column():
+                        plan_pro_md = gr.Markdown(t("es", "plan_pro_text"))
+                    with gr.Column():
+                        plan_lab_md = gr.Markdown(t("es", "plan_lab_text"))
+            btn_plan_upgrade = gr.Button(t("es", "plan_upgrade"))
+            plan_footer_md = gr.Markdown(t("es", "plan_footer"))
+
+            gr.Markdown("---")
+            config_email_html = gr.HTML(
+                "<div style='font-size: 0.85em; color: #666;'>inf.aether@outlook.com</div>"
+            )
+
+        language_outputs = [
+            language_state,
+            header_html,
+            boot_msg,
+            btn_new_chat,
+            chat_selector,
+            chat,
+            user_msg,
+            btn_send,
+            btn_reload,
+            btn_export_demo,
+            btn_refresh_status,
+            btn_builder,
+            btn_scientific,
+            admin_ops,
+            task_queue_md,
+            task_cmd,
+            prio,
+            btn_enqueue,
+            project_orchestrator_md,
+            project_name,
+            btn_add_project,
+            project_selector,
+            task_command,
+            btn_add_task,
+            task_selector,
+            btn_run_task,
+            orchestrator_out,
+            status,
+            logs_n,
+            logs,
+            btn_refresh_logs,
+            export_out,
+            snapshots_md,
+            snap_name,
+            btn_snap_create,
+            btn_snap_restore,
+            btn_snap_list,
+            btn_snap_export,
+            snap_out,
+            snap_import_txt,
+            btn_snap_import,
+            replica_md,
+            replica_name,
+            btn_replica_export,
+            replica_out,
+            replica_in,
+            btn_replica_import,
+            replica_result,
+            btn_home_from_builder,
+            builder_title_md,
+            builder_subtitle_md,
+            builder_tags_md,
+            builder_desc_md,
+            builder_project_id,
+            builder_export_file,
+            btn_builder_export,
+            btn_builder_new_chat,
+            builder_chat_selector,
+            builder_chat,
+            builder_msg,
+            btn_builder_send,
+            btn_home_from_scientific,
+            scientific_title_md,
+            scientific_subtitle_md,
+            scientific_desc_md,
+            btn_scientific_new_chat,
+            scientific_chat_selector,
+            scientific_chat,
+            scientific_msg,
+            btn_scientific_send,
+            btn_home_from_config,
+            config_title_md,
+            config_account_md,
+            account_status,
+            account_username,
+            account_pin,
+            btn_login,
+            btn_logout,
+            config_language_md,
+            language_selector,
+            config_plans_md,
+            plans_accordion,
+            plan_free_md,
+            plan_pro_md,
+            plan_lab_md,
+            btn_plan_upgrade,
+            plan_footer_md,
+            config_email_html,
+        ]
 
         # wiring
         btn_send.click(fn=chat_send, inputs=[user_msg, chat_state], outputs=[chat, chat_state, user_msg])
@@ -3968,7 +4771,7 @@ def build_ui() -> gr.Blocks:
 
         btn_login.click(
             fn=ui_login,
-            inputs=[account_username, account_pin, account_state],
+            inputs=[account_username, account_pin, account_state, language_state],
             outputs=[
                 is_admin_state,
                 account_state,
@@ -3982,7 +4785,7 @@ def build_ui() -> gr.Blocks:
         )
         btn_logout.click(
             fn=ui_logout,
-            inputs=[account_state],
+            inputs=[account_state, language_state],
             outputs=[
                 is_admin_state,
                 account_state,
@@ -3994,7 +4797,11 @@ def build_ui() -> gr.Blocks:
                 admin_ops,
             ],
         )
-        language_selector.change(fn=lambda lang: lang, inputs=[language_selector], outputs=[language_state])
+        language_selector.change(
+            fn=ui_apply_language,
+            inputs=[language_selector, account_state],
+            outputs=language_outputs,
+        )
 
         btn_open_config.click(
             fn=lambda: ui_set_view("config"),
@@ -4028,6 +4835,7 @@ def build_ui() -> gr.Blocks:
         )
 
         # boot (solo una vez)
+        demo.load(fn=ui_init_language, inputs=[account_state], outputs=language_outputs)
         demo.load(fn=start_aether, inputs=[], outputs=[boot_msg])
         demo.load(fn=ui_status, inputs=[], outputs=[status])
         demo.load(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])
