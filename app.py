@@ -426,12 +426,8 @@ def env_bool(name: str, default: bool = False) -> bool:
         return False
     return bool(default)
 
-def env_freeze_mode(name: str) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return False
-    v = str(raw).strip().lower()
-    return v in {"1", "true", "yes"}
+def get_bool_env(name: str, default: bool = False) -> bool:
+    return env_bool(name, default)
 
 def sha256_text(s: str) -> str:
     return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
@@ -907,9 +903,9 @@ def evaluate_stability() -> Dict[str, Any]:
     with throttle_lock:
         throttle_mode = THROTTLE_STATE.get("mode")
 
-    if safe_mode_enabled() or is_frozen():
+    if PAUSED:
         mode = "PAUSED"
-        reason_list = ["SAFE_MODE" if safe_mode_enabled() else "FROZEN"]
+        reason_list = ["FROZEN"]
         action = "Pause external execution; internal maintenance only."
     elif overall_health == "CRITICAL" and recovery_count >= 2:
         mode = "NEEDS_HUMAN"
@@ -935,7 +931,7 @@ def evaluate_stability() -> Dict[str, Any]:
 # -----------------------------
 # SAFE MODE + WATCHDOG
 # -----------------------------
-AETHER_SAFE_MODE_ENABLED = env_bool("AETHER_SAFE_MODE_ENABLED", True)
+AETHER_SAFE_MODE_ENABLED = env_bool("AETHER_SAFE_MODE_ENABLED", False)
 AETHER_WATCHDOG_SEC = int(os.environ.get("AETHER_WATCHDOG_SEC", "180"))
 AETHER_WATCHDOG_GRACE_SEC = int(os.environ.get("AETHER_WATCHDOG_GRACE_SEC", "30"))
 
@@ -949,16 +945,16 @@ SAFE_MODE_LOGGED = False
 # -----------------------------
 # FREEZE + POLICY
 # -----------------------------
-AETHER_FREEZE_MODE = env_freeze_mode("AETHER_FREEZE_MODE")
+PAUSED = get_bool_env("AETHER_FREEZE_MODE", default=False)
 AETHER_ORCHESTRATOR_ALLOW_RUN = env_bool("AETHER_ORCHESTRATOR_ALLOW_RUN", True)
 
 ROOT_GOAL = "EXECUTE_USER_COMMANDS_ONLY"
 KILL_SWITCH = {"enabled": True, "status": "ARMED"}
 
-FREEZE_STATE = {"enabled": bool(AETHER_FREEZE_MODE), "since": safe_now() if AETHER_FREEZE_MODE else None}
+FREEZE_STATE = {"enabled": bool(PAUSED), "since": safe_now() if PAUSED else None}
 
 def is_frozen() -> bool:
-    return bool(FREEZE_STATE.get("enabled"))
+    return bool(PAUSED)
 
 ORCHESTRATOR_POLICY = {"allow_run": bool(AETHER_ORCHESTRATOR_ALLOW_RUN)}
 
@@ -1117,6 +1113,9 @@ DEFAULT_STATE: Dict[str, Any] = {
     "mode": "core",
     "energy": 100,
     "focus": "STANDBY",
+    "paused": False,
+    "degraded": False,
+    "maintenance": False,
     "created_at": safe_now(),
     "last_cycle": None,
     "last_heartbeat_ts": None,
@@ -1198,8 +1197,16 @@ def init_state() -> None:
     AETHER_LOGS = load_json(LOG_FILE, [])
     AETHER_PROJECTS = load_json(PROJECTS_FILE, [])
     AETHER_TASKS = load_json(TASKS_FILE, [])
+    state_touched = False
+    if not PAUSED:
+        for key in ("paused", "degraded", "maintenance"):
+            if AETHER_STATE.get(key) is not False:
+                AETHER_STATE[key] = False
+                state_touched = True
     if "last_heartbeat_ts" not in AETHER_STATE:
         AETHER_STATE["last_heartbeat_ts"] = None
+        state_touched = True
+    if state_touched:
         save_json_atomic(STATE_FILE, AETHER_STATE)
     _STATE_INITIALIZED = True
 
@@ -1454,11 +1461,6 @@ def enqueue_task(
     command = owner_command
 
     zone = resolve_zone(source, origin)
-    blocked_zones_in_safe = {"CHAT"}
-    if safe_mode_enabled() and zone in blocked_zones_in_safe:
-        log_event("SAFE_MODE_BLOCK_ENQUEUE", {"command": command, "source": source, "zone": zone})
-        return {"ok": False, "blocked": True, "reason": "SAFE_MODE_ON"}
-
     blocked_zones_in_freeze = {"CHAT"}
     if is_frozen() and zone in blocked_zones_in_freeze:
         log_event("FREEZE_BLOCK_ENQUEUE", {"command": command, "source": source, "zone": zone})
@@ -2321,8 +2323,6 @@ def _extract_subtasks_from_result(result: Dict[str, Any]) -> List[str]:
     return out[:50]
 
 def can_run_project_task(task: Dict[str, Any]) -> Tuple[bool, str]:
-    if safe_mode_enabled():
-        return False, "SAFE_MODE_ON"
     if is_frozen():
         return False, "SYSTEM_FROZEN"
     if not ORCHESTRATOR_POLICY.get("allow_run", True):
@@ -2606,13 +2606,8 @@ def run_now(
     inferred_type = (task_type_override or "").strip() or _infer_task_type(command, source)
     stability = evaluate_stability()
     stability_mode = stability.get("mode")
-    if stability_mode == "NEEDS_HUMAN":
-        return {"mode": "blocked"}, {"success": False, "error": "STABILITY_NEEDS_HUMAN"}
     if stability_mode == "PAUSED" and not _is_status_command(command):
         return {"mode": "blocked"}, {"success": False, "error": "STABILITY_PAUSED"}
-    if stability_mode == "DEGRADED":
-        if not _is_plan_command(command) and inferred_type != "read_only":
-            return {"mode": "blocked"}, {"success": False, "error": "STABILITY_DEGRADED"}
     allowed, reason, specials = _trust_zone_allowed(zone, inferred_type, command)
     if not allowed:
         log_event(
@@ -2663,11 +2658,6 @@ def run_now(
 
     domains = detect_domains(command)
     decision = decide_engine(command, domains)
-
-    if safe_mode_enabled() and decision.get("mode") != "ai_module" and not _is_status_command(command):
-        log_event("SAFE_MODE_BLOCK_RUN", {"command": command, "source": source, "mode": decision.get("mode")})
-        update_dashboard()
-        return {"mode": "safe_mode"}, {"success": False, "error": "SAFE_MODE_ON"}
 
     result = obedient_execution(command, decision)
     success = bool(result.get("success"))
@@ -2804,10 +2794,9 @@ def process_task(task: Dict[str, Any]) -> None:
     origin = task.get("origin")
     stability = evaluate_stability()
     stability_mode = stability.get("mode")
-    if stability_mode in {"NEEDS_HUMAN", "PAUSED", "DEGRADED"}:
-        allow_internal = stability_mode == "PAUSED" and zone == "INTERNAL" and task_type == "read_only"
-        allow_degraded = stability_mode == "DEGRADED" and task_type == "read_only"
-        if not (allow_internal or allow_degraded):
+    if stability_mode == "PAUSED":
+        allow_internal = zone == "INTERNAL" and task_type == "read_only"
+        if not allow_internal:
             result = {"success": False, "error": f"STABILITY_{stability_mode}"}
             decision = {"mode": "blocked"}
             _store_memory_event(task_id, command, decision, result, task.get("source", "queue"))
