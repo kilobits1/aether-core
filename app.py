@@ -426,6 +426,13 @@ def env_bool(name: str, default: bool = False) -> bool:
         return False
     return bool(default)
 
+def env_freeze_mode(name: str) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return False
+    v = str(raw).strip().lower()
+    return v in {"1", "true", "yes"}
+
 def sha256_text(s: str) -> str:
     return hashlib.sha256((s or "").encode("utf-8")).hexdigest()
 
@@ -942,7 +949,7 @@ SAFE_MODE_LOGGED = False
 # -----------------------------
 # FREEZE + POLICY
 # -----------------------------
-AETHER_FREEZE_MODE = env_bool("AETHER_FREEZE_MODE", True)
+AETHER_FREEZE_MODE = env_freeze_mode("AETHER_FREEZE_MODE")
 AETHER_ORCHESTRATOR_ALLOW_RUN = env_bool("AETHER_ORCHESTRATOR_ALLOW_RUN", True)
 
 ROOT_GOAL = "EXECUTE_USER_COMMANDS_ONLY"
@@ -2494,6 +2501,14 @@ def replay_task(task_id: str, dry_run: bool = True) -> Dict[str, Any]:
 def _is_plan_command(command: str) -> bool:
     return (command or "").strip().lower().startswith("plan:")
 
+def _is_status_command(command: str) -> bool:
+    cmd = (command or "").strip().lower()
+    if not cmd:
+        return False
+    if cmd in {"status", "estado", "estado interno", "internal status", "review internal status", "revisar status interno"}:
+        return True
+    return "status" in cmd or "estado" in cmd
+
 def _clean_plan_subject(command: str) -> str:
     raw = (command or "").strip()
     if raw.lower().startswith("plan:"):
@@ -2593,7 +2608,7 @@ def run_now(
     stability_mode = stability.get("mode")
     if stability_mode == "NEEDS_HUMAN":
         return {"mode": "blocked"}, {"success": False, "error": "STABILITY_NEEDS_HUMAN"}
-    if stability_mode == "PAUSED":
+    if stability_mode == "PAUSED" and not _is_status_command(command):
         return {"mode": "blocked"}, {"success": False, "error": "STABILITY_PAUSED"}
     if stability_mode == "DEGRADED":
         if not _is_plan_command(command) and inferred_type != "read_only":
@@ -2641,7 +2656,7 @@ def run_now(
         update_dashboard()
         return decision, result
 
-    if is_frozen():
+    if is_frozen() and not _is_status_command(command):
         log_event("FREEZE_BLOCK_CHAT", {"command": command})
         update_dashboard()
         return {"mode": "frozen"}, {"success": False, "error": "SYSTEM_FROZEN"}
@@ -2649,7 +2664,7 @@ def run_now(
     domains = detect_domains(command)
     decision = decide_engine(command, domains)
 
-    if safe_mode_enabled() and decision.get("mode") != "ai_module":
+    if safe_mode_enabled() and decision.get("mode") != "ai_module" and not _is_status_command(command):
         log_event("SAFE_MODE_BLOCK_RUN", {"command": command, "source": source, "mode": decision.get("mode")})
         update_dashboard()
         return {"mode": "safe_mode"}, {"success": False, "error": "SAFE_MODE_ON"}
