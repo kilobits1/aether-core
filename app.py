@@ -37,6 +37,7 @@ from typing import Any, Dict, List, Tuple, Optional
 
 import gradio as gr
 from plugins.adapters import Adapters
+from core.orchestrator import Orchestrator
 
 
 SUPPORTED_LANGS = ("es", "en", "pt-BR", "pt-PT")
@@ -985,6 +986,26 @@ ORCHESTRATOR_STATE = {
     "last_heartbeat_ts": None,
 }
 orchestrator_state_lock = threading.Lock()
+
+def _sync_orchestrator_state(snapshot: Dict[str, Any]) -> None:
+    status = snapshot.get("status")
+    heartbeat_ts = snapshot.get("ts")
+    with orchestrator_state_lock:
+        if status:
+            ORCHESTRATOR_STATE["status"] = status
+        if heartbeat_ts:
+            ORCHESTRATOR_STATE["last_heartbeat_ts"] = heartbeat_ts
+            if not ORCHESTRATOR_STATE.get("since"):
+                ORCHESTRATOR_STATE["since"] = heartbeat_ts
+        ORCHESTRATOR_STATE["blocked_reason"] = None
+
+ORCHESTRATOR = Orchestrator(
+    dashboard_path=DASHBOARD_FILE,
+    safe_mode_ref=SAFE_MODE,
+    freeze_state_ref=FREEZE_STATE,
+    kill_switch_ref=KILL_SWITCH,
+    on_state=_sync_orchestrator_state,
+)
 
 # -----------------------------
 # JSON IO (atomic)
@@ -4039,8 +4060,6 @@ def start_aether() -> str:
     _watchdog_thread = threading.Thread(target=watchdog_loop, daemon=True)
     _watchdog_thread.start()
 
-    start_orchestrator()
-
     if safe_mode_enabled():
         enable_safe_mode(SAFE_MODE.get("reason") or "ENV_ENABLED")
 
@@ -4068,8 +4087,7 @@ def start_orchestrator() -> None:
             return
         _ORCHESTRATOR_STARTED = True
         _set_orchestrator_state("RUNNING")
-        _orchestrator_thread = threading.Thread(target=orchestrator_loop, daemon=True)
-        _orchestrator_thread.start()
+        ORCHESTRATOR.start(AETHER_STATE)
 
 # -----------------------------
 # GRADIO UI (HF SAFE)
