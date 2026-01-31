@@ -975,6 +975,17 @@ events_log_lock = threading.Lock()
 throttle_lock = threading.Lock()
 
 # -----------------------------
+# ORCHESTRATOR STATE
+# -----------------------------
+ORCHESTRATOR_STATE = {
+    "status": "STOPPED",
+    "since": None,
+    "last_task": None,
+    "blocked_reason": None,
+}
+orchestrator_state_lock = threading.Lock()
+
+# -----------------------------
 # JSON IO (atomic)
 # -----------------------------
 
@@ -1303,6 +1314,19 @@ def _task_status_counts() -> Dict[str, int]:
                 counts[s] += 1
     return counts
 
+def _orchestrator_queue_length() -> int:
+    with tasks_lock:
+        return sum(1 for t in AETHER_TASKS if t.get("status") == "PENDING")
+
+def _set_orchestrator_state(status: str, blocked_reason: Optional[str] = None, last_task: Optional[str] = None) -> None:
+    with orchestrator_state_lock:
+        ORCHESTRATOR_STATE["status"] = status
+        ORCHESTRATOR_STATE["blocked_reason"] = blocked_reason
+        if not ORCHESTRATOR_STATE.get("since"):
+            ORCHESTRATOR_STATE["since"] = safe_now()
+        if last_task is not None:
+            ORCHESTRATOR_STATE["last_task"] = last_task
+
 LOADED_MODULES: Dict[str, Any] = {}
 
 def update_dashboard() -> None:
@@ -1314,6 +1338,8 @@ def update_dashboard() -> None:
         projects_count = len(AETHER_PROJECTS)
     with tasks_lock:
         tasks_count = len(AETHER_TASKS)
+    with orchestrator_state_lock:
+        orchestrator_snapshot = dict(ORCHESTRATOR_STATE)
 
     dash = {
         "energy": snap.get("energy", 0),
@@ -1331,6 +1357,11 @@ def update_dashboard() -> None:
         "task_budget": max(1, int(AETHER_TASK_BUDGET)),
         "task_max_retries": max(0, int(AETHER_TASK_MAX_RETRIES)),
         "orchestrator_policy": dict(ORCHESTRATOR_POLICY),
+        "orchestrator": {
+            "status": orchestrator_snapshot.get("status"),
+            "queue_length": _orchestrator_queue_length(),
+            "blocked_reason": orchestrator_snapshot.get("blocked_reason"),
+        },
         "projects_count": projects_count,
         "tasks_count": tasks_count,
         "tasks_status": _task_status_counts(),
@@ -2734,6 +2765,36 @@ def run_project_task(task_id: str) -> Dict[str, Any]:
 # -----------------------------
 STOP_EVENT = threading.Event()
 
+def orchestrator_loop() -> None:
+    _set_orchestrator_state("RUNNING")
+    while not STOP_EVENT.is_set():
+        try:
+            blocked_reason = None
+            if safe_mode_enabled():
+                blocked_reason = "SAFE_MODE"
+            elif is_frozen():
+                blocked_reason = "FROZEN"
+            elif KILL_SWITCH.get("status") != "ARMED":
+                blocked_reason = "KILL_SWITCH"
+            elif not ORCHESTRATOR_POLICY.get("allow_run", True):
+                blocked_reason = "POLICY_BLOCKED"
+
+            if blocked_reason:
+                _set_orchestrator_state("RUNNING", blocked_reason=blocked_reason)
+                time.sleep(ORCHESTRATOR_TICK_SEC)
+                continue
+
+            task_id = _next_pending_task_id()
+            if task_id:
+                _set_orchestrator_state("RUNNING", blocked_reason=None, last_task=task_id)
+                run_project_task(task_id)
+            else:
+                _set_orchestrator_state("RUNNING", blocked_reason=None)
+            time.sleep(ORCHESTRATOR_TICK_SEC)
+        except Exception as e:
+            log_event("ORCHESTRATOR_ERROR", {"error": str(e)})
+            time.sleep(ORCHESTRATOR_TICK_SEC)
+
 def _store_memory_event(task_id: str, command: str, decision: Dict[str, Any], result: Dict[str, Any], source: str) -> None:
     with memory_lock:
         AETHER_MEMORY.append(
@@ -2927,6 +2988,21 @@ def process_task(task: Dict[str, Any]) -> None:
 
 def _clamp(value: float, min_value: float, max_value: float) -> float:
     return max(min_value, min(max_value, value))
+
+ORCHESTRATOR_TICK_MIN_SEC = 0.25
+ORCHESTRATOR_TICK_MAX_SEC = 0.5
+ORCHESTRATOR_TICK_SEC = _clamp(
+    float(os.environ.get("AETHER_ORCHESTRATOR_TICK_SEC", "0.35")),
+    ORCHESTRATOR_TICK_MIN_SEC,
+    ORCHESTRATOR_TICK_MAX_SEC,
+)
+
+def _next_pending_task_id() -> Optional[str]:
+    with tasks_lock:
+        for task in AETHER_TASKS:
+            if task.get("status") == "PENDING":
+                return task.get("id")
+    return None
 
 def _recent_error_stats(now_ts: float) -> Tuple[int, int]:
     window_start = now_ts - THROTTLE_ERROR_WINDOW_SEC
@@ -3417,6 +3493,8 @@ def ui_status() -> str:
             "last_update": STRATEGIC_MEMORY.get("last_update"),
             "history_len": len(hist) if isinstance(hist, list) else 0,
         }
+    with orchestrator_state_lock:
+        orchestrator_snapshot = dict(ORCHESTRATOR_STATE)
     with throttle_lock:
         throttle_snapshot = {
             "score": THROTTLE_STATE.get("score"),
@@ -3452,6 +3530,11 @@ def ui_status() -> str:
             },
             "throttle": throttle_snapshot,
             "orchestrator_policy": ORCHESTRATOR_POLICY,
+            "orchestrator": {
+                "status": orchestrator_snapshot.get("status"),
+                "queue_length": _orchestrator_queue_length(),
+                "blocked_reason": orchestrator_snapshot.get("blocked_reason"),
+            },
             "projects_count": len(AETHER_PROJECTS),
             "tasks_count": len(AETHER_TASKS),
             "tasks_status": _task_status_counts(),
@@ -3907,6 +3990,9 @@ _STARTED = False
 _worker_thread = None
 _sched_thread = None
 _watchdog_thread = None
+_orchestrator_thread = None
+_ORCHESTRATOR_STARTED = False
+orchestrator_start_lock = threading.Lock()
 
 # -----------------------------
 # STARTUP (safe once)
@@ -3946,6 +4032,8 @@ def start_aether() -> str:
     _watchdog_thread = threading.Thread(target=watchdog_loop, daemon=True)
     _watchdog_thread.start()
 
+    start_orchestrator()
+
     if safe_mode_enabled():
         enable_safe_mode(SAFE_MODE.get("reason") or "ENV_ENABLED")
 
@@ -3965,6 +4053,16 @@ def start_aether() -> str:
     )
     update_dashboard()
     return "✅ AETHER iniciado correctamente."
+
+def start_orchestrator() -> None:
+    global _ORCHESTRATOR_STARTED, _orchestrator_thread
+    with orchestrator_start_lock:
+        if _ORCHESTRATOR_STARTED:
+            return
+        _ORCHESTRATOR_STARTED = True
+        _set_orchestrator_state("RUNNING")
+        _orchestrator_thread = threading.Thread(target=orchestrator_loop, daemon=True)
+        _orchestrator_thread.start()
 
 # -----------------------------
 # GRADIO UI (HF SAFE)

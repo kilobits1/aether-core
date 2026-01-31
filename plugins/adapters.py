@@ -3,7 +3,6 @@ import os
 import json
 import subprocess
 from typing import Any, Dict, List, Optional
-from urllib.request import Request, urlopen
 
 class PolicyError(Exception):
     pass
@@ -99,6 +98,7 @@ class Adapters:
             raise PolicyError("HTTP blocked by policy (no allowed_http_domains set)")
 
         from urllib.parse import urlparse
+        from urllib.request import Request, urlopen
         host = urlparse(url).netloc.lower()
         if host not in [d.lower() for d in self.allowed_http_domains]:
             raise PolicyError(f"HTTP domain not allowed: {host}")
