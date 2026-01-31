@@ -26,7 +26,6 @@ import time
 import json
 import uuid
 import hashlib
-import hmac
 import threading
 import importlib.util
 import copy
@@ -63,7 +62,7 @@ LANG = {
         "refresh_status": "Refresh Status",
         "btn_builder": "🛠️ Crear tu Web / App",
         "btn_scientific": "🔬 Científico",
-        "admin_ops": "Operaciones avanzadas (Admin)",
+        "advanced_ops": "Operaciones avanzadas",
         "task_queue_title": "### Cola de tareas",
         "task_cmd_label": "Comando para cola",
         "task_cmd_placeholder": "Ej: revisar estado interno",
@@ -125,73 +124,8 @@ LANG = {
         "scientific_chat_label": "Scientific Chat",
         "scientific_message_placeholder": "Describe tu consulta científica...",
         "config_title": "## Configuración",
-        "config_account_title": "### Cuenta",
-        "account_status_label": "Estado",
-        "account_status_guest": "Invitado",
-        "account_status_admin": "Admin",
-        "username_label": "Usuario",
-        "username_placeholder": "Tu usuario",
-        "pin_label": "Pin / Código",
-        "pin_placeholder": "Código de acceso",
-        "login": "Login",
-        "logout": "Cerrar sesión",
         "config_language_title": "### Idioma",
         "language_selector_label": "Selecciona idioma",
-        "config_plans_title": "### Plan y precios",
-        "plans_accordion_label": "Planes",
-        "plan_free_text": (
-            "### FREE — S/ 0\n"
-            "**CREAR**\n"
-            "- 1 proyecto activo\n"
-            "- Guía paso a paso (idea → estructura → checklist)\n"
-            "- Código base simple (cuando aplique)\n"
-            "- Export MD (documento editable)\n\n"
-            "**CIENTÍFICO**\n"
-            "- Método científico guiado (problema → hipótesis → método)\n"
-            "- Escenarios básicos\n"
-            "- Conclusiones y limitaciones claras\n"
-            "- Export MD (documento editable)\n\n"
-            "**EXTRAS**\n"
-            "- Chat y proyecto persistente\n"
-            "- Interfaz simple y fácil de usar"
-        ),
-        "plan_pro_text": (
-            "### PRO — S/ 49 (promo) → luego S/ 149\n"
-            "**CREAR**\n"
-            "- Hasta 5 proyectos\n"
-            "- Plan más detallado (arquitectura, módulos, flujo)\n"
-            "- Código base más completo\n"
-            "- Export PDF + MD (documento editable)\n\n"
-            "**CIENTÍFICO**\n"
-            "- Escenarios comparativos\n"
-            "- Análisis más profundo y ordenado\n"
-            "- Mejor continuidad del proyecto\n"
-            "- Export PDF + MD (documento editable)\n\n"
-            "**EXTRAS**\n"
-            "- Historial ampliado\n"
-            "- Mejor organización de proyectos"
-        ),
-        "plan_lab_text": (
-            "### LAB — S/ 299 (promo) → luego S/ 799\n"
-            "**CREAR**\n"
-            "- Proyectos ilimitados\n"
-            "- Entregables completos (documentación, checklist, estructura para equipo)\n"
-            "- Código base avanzado (cuando aplique)\n"
-            "- Export avanzado (ZIP cuando aplique)\n\n"
-            "**CIENTÍFICO**\n"
-            "- Estudios completos y reproducibles\n"
-            "- Escenarios complejos\n"
-            "- Mayor rigor y trazabilidad\n"
-            "- Export avanzado (cuando aplique)\n\n"
-            "**EXTRAS**\n"
-            "- Historial completo\n"
-            "- Prioridad de recursos"
-        ),
-        "plan_upgrade": "Actualizar (próximamente)",
-        "plan_footer": (
-            "Aether te ayuda a pensar, analizar y crear con orden, "
-            "para que continúes el trabajo en tu propio entorno."
-        ),
     },
     "en": {
         "app_title": "AETHER CORE — HF SAFE",
@@ -208,7 +142,7 @@ LANG = {
         "refresh_status": "Refresh Status",
         "btn_builder": "🛠️ Build your Web / App",
         "btn_scientific": "🔬 Scientific",
-        "admin_ops": "Advanced operations (Admin)",
+        "advanced_ops": "Advanced operations",
         "task_queue_title": "### Task queue",
         "task_cmd_label": "Queue command",
         "task_cmd_placeholder": "e.g. review internal status",
@@ -269,73 +203,8 @@ LANG = {
         "scientific_chat_label": "Scientific Chat",
         "scientific_message_placeholder": "Describe your scientific question...",
         "config_title": "## Settings",
-        "config_account_title": "### Account",
-        "account_status_label": "Status",
-        "account_status_guest": "Guest",
-        "account_status_admin": "Admin",
-        "username_label": "User",
-        "username_placeholder": "Your username",
-        "pin_label": "PIN / Code",
-        "pin_placeholder": "Access code",
-        "login": "Login",
-        "logout": "Log out",
         "config_language_title": "### Language",
         "language_selector_label": "Select language",
-        "config_plans_title": "### Plans and pricing",
-        "plans_accordion_label": "Plans",
-        "plan_free_text": (
-            "### FREE — S/ 0\n"
-            "**BUILD**\n"
-            "- 1 active project\n"
-            "- Step-by-step guide (idea → structure → checklist)\n"
-            "- Simple starter code (when applicable)\n"
-            "- Export MD (editable document)\n\n"
-            "**SCIENTIFIC**\n"
-            "- Guided scientific method (problem → hypothesis → method)\n"
-            "- Basic scenarios\n"
-            "- Clear conclusions and limitations\n"
-            "- Export MD (editable document)\n\n"
-            "**EXTRAS**\n"
-            "- Persistent chat and project\n"
-            "- Simple, easy-to-use interface"
-        ),
-        "plan_pro_text": (
-            "### PRO — S/ 49 (promo) → then S/ 149\n"
-            "**BUILD**\n"
-            "- Up to 5 projects\n"
-            "- More detailed plan (architecture, modules, flow)\n"
-            "- More complete starter code\n"
-            "- Export PDF + MD (editable document)\n\n"
-            "**SCIENTIFIC**\n"
-            "- Comparative scenarios\n"
-            "- Deeper, more organized analysis\n"
-            "- Better project continuity\n"
-            "- Export PDF + MD (editable document)\n\n"
-            "**EXTRAS**\n"
-            "- Expanded history\n"
-            "- Better project organization"
-        ),
-        "plan_lab_text": (
-            "### LAB — S/ 299 (promo) → then S/ 799\n"
-            "**BUILD**\n"
-            "- Unlimited projects\n"
-            "- Full deliverables (documentation, checklist, team structure)\n"
-            "- Advanced starter code (when applicable)\n"
-            "- Advanced export (ZIP when applicable)\n\n"
-            "**SCIENTIFIC**\n"
-            "- Complete, reproducible studies\n"
-            "- Complex scenarios\n"
-            "- Greater rigor and traceability\n"
-            "- Advanced export (when applicable)\n\n"
-            "**EXTRAS**\n"
-            "- Full history\n"
-            "- Resource priority"
-        ),
-        "plan_upgrade": "Upgrade (coming soon)",
-        "plan_footer": (
-            "Aether helps you think, analyze, and create with order "
-            "so you can continue your work in your own environment."
-        ),
     },
     "pt-BR": {
         "app_title": "AETHER CORE — HF SAFE",
@@ -352,7 +221,7 @@ LANG = {
         "refresh_status": "Atualizar status",
         "btn_builder": "🛠️ Criar sua Web / App",
         "btn_scientific": "🔬 Científico",
-        "admin_ops": "Operações avançadas (Admin)",
+        "advanced_ops": "Operações avançadas",
         "task_queue_title": "### Fila de tarefas",
         "task_cmd_label": "Comando da fila",
         "task_cmd_placeholder": "Ex: revisar status interno",
@@ -414,73 +283,8 @@ LANG = {
         "scientific_chat_label": "Chat Científico",
         "scientific_message_placeholder": "Descreva sua pergunta científica...",
         "config_title": "## Configurações",
-        "config_account_title": "### Conta",
-        "account_status_label": "Status",
-        "account_status_guest": "Convidado",
-        "account_status_admin": "Admin",
-        "username_label": "Usuário",
-        "username_placeholder": "Seu usuário",
-        "pin_label": "PIN / Código",
-        "pin_placeholder": "Código de acesso",
-        "login": "Login",
-        "logout": "Sair",
         "config_language_title": "### Idioma",
         "language_selector_label": "Selecionar idioma",
-        "config_plans_title": "### Planos e preços",
-        "plans_accordion_label": "Planos",
-        "plan_free_text": (
-            "### FREE — S/ 0\n"
-            "**CRIAR**\n"
-            "- 1 projeto ativo\n"
-            "- Guia passo a passo (ideia → estrutura → checklist)\n"
-            "- Código base simples (quando aplicável)\n"
-            "- Exportar MD (documento editável)\n\n"
-            "**CIENTÍFICO**\n"
-            "- Método científico guiado (problema → hipótese → método)\n"
-            "- Cenários básicos\n"
-            "- Conclusões e limitações claras\n"
-            "- Exportar MD (documento editável)\n\n"
-            "**EXTRAS**\n"
-            "- Chat e projeto persistente\n"
-            "- Interface simples e fácil de usar"
-        ),
-        "plan_pro_text": (
-            "### PRO — S/ 49 (promo) → depois S/ 149\n"
-            "**CRIAR**\n"
-            "- Até 5 projetos\n"
-            "- Plano mais detalhado (arquitetura, módulos, fluxo)\n"
-            "- Código base mais completo\n"
-            "- Exportar PDF + MD (documento editável)\n\n"
-            "**CIENTÍFICO**\n"
-            "- Cenários comparativos\n"
-            "- Análise mais profunda e organizada\n"
-            "- Melhor continuidade do projeto\n"
-            "- Exportar PDF + MD (documento editável)\n\n"
-            "**EXTRAS**\n"
-            "- Histórico ampliado\n"
-            "- Melhor organização de projetos"
-        ),
-        "plan_lab_text": (
-            "### LAB — S/ 299 (promo) → depois S/ 799\n"
-            "**CRIAR**\n"
-            "- Projetos ilimitados\n"
-            "- Entregáveis completos (documentação, checklist, estrutura para equipe)\n"
-            "- Código base avançado (quando aplicável)\n"
-            "- Exportação avançada (ZIP quando aplicável)\n\n"
-            "**CIENTÍFICO**\n"
-            "- Estudos completos e reproduzíveis\n"
-            "- Cenários complexos\n"
-            "- Maior rigor e rastreabilidade\n"
-            "- Exportação avançada (quando aplicável)\n\n"
-            "**EXTRAS**\n"
-            "- Histórico completo\n"
-            "- Prioridade de recursos"
-        ),
-        "plan_upgrade": "Atualizar (em breve)",
-        "plan_footer": (
-            "Aether ajuda você a pensar, analisar e criar com ordem "
-            "para continuar o trabalho no seu próprio ambiente."
-        ),
     },
     "pt-PT": {
         "app_title": "AETHER CORE — HF SAFE",
@@ -497,7 +301,7 @@ LANG = {
         "refresh_status": "Atualizar estado",
         "btn_builder": "🛠️ Criar a tua Web / App",
         "btn_scientific": "🔬 Científico",
-        "admin_ops": "Operações avançadas (Admin)",
+        "advanced_ops": "Operações avançadas",
         "task_queue_title": "### Fila de tarefas",
         "task_cmd_label": "Comando da fila",
         "task_cmd_placeholder": "Ex: rever estado interno",
@@ -559,73 +363,8 @@ LANG = {
         "scientific_chat_label": "Chat Científico",
         "scientific_message_placeholder": "Descreve a tua questão científica...",
         "config_title": "## Configurações",
-        "config_account_title": "### Conta",
-        "account_status_label": "Estado",
-        "account_status_guest": "Convidado",
-        "account_status_admin": "Admin",
-        "username_label": "Utilizador",
-        "username_placeholder": "O teu utilizador",
-        "pin_label": "PIN / Código",
-        "pin_placeholder": "Código de acesso",
-        "login": "Login",
-        "logout": "Terminar sessão",
         "config_language_title": "### Idioma",
         "language_selector_label": "Selecionar idioma",
-        "config_plans_title": "### Planos e preços",
-        "plans_accordion_label": "Planos",
-        "plan_free_text": (
-            "### FREE — S/ 0\n"
-            "**CRIAR**\n"
-            "- 1 projeto ativo\n"
-            "- Guia passo a passo (ideia → estrutura → checklist)\n"
-            "- Código base simples (quando aplicável)\n"
-            "- Exportar MD (documento editável)\n\n"
-            "**CIENTÍFICO**\n"
-            "- Método científico guiado (problema → hipótese → método)\n"
-            "- Cenários básicos\n"
-            "- Conclusões e limitações claras\n"
-            "- Exportar MD (documento editável)\n\n"
-            "**EXTRAS**\n"
-            "- Chat e projeto persistente\n"
-            "- Interface simples e fácil de usar"
-        ),
-        "plan_pro_text": (
-            "### PRO — S/ 49 (promo) → depois S/ 149\n"
-            "**CRIAR**\n"
-            "- Até 5 projetos\n"
-            "- Plano mais detalhado (arquitetura, módulos, fluxo)\n"
-            "- Código base mais completo\n"
-            "- Exportar PDF + MD (documento editável)\n\n"
-            "**CIENTÍFICO**\n"
-            "- Cenários comparativos\n"
-            "- Análise mais profunda e organizada\n"
-            "- Melhor continuidade do projeto\n"
-            "- Exportar PDF + MD (documento editável)\n\n"
-            "**EXTRAS**\n"
-            "- Histórico ampliado\n"
-            "- Melhor organização de projetos"
-        ),
-        "plan_lab_text": (
-            "### LAB — S/ 299 (promo) → depois S/ 799\n"
-            "**CRIAR**\n"
-            "- Projetos ilimitados\n"
-            "- Entregáveis completos (documentação, checklist, estrutura para equipa)\n"
-            "- Código base avançado (quando aplicável)\n"
-            "- Exportação avançada (ZIP quando aplicável)\n\n"
-            "**CIENTÍFICO**\n"
-            "- Estudos completos e reproduzíveis\n"
-            "- Cenários complexos\n"
-            "- Maior rigor e rastreabilidade\n"
-            "- Exportação avançada (quando aplicável)\n\n"
-            "**EXTRAS**\n"
-            "- Histórico completo\n"
-            "- Prioridade de recursos"
-        ),
-        "plan_upgrade": "Atualizar (em breve)",
-        "plan_footer": (
-            "Aether ajuda-te a pensar, analisar e criar com ordem "
-            "para continuares o trabalho no teu próprio ambiente."
-        ),
     },
 }
 
@@ -1368,6 +1107,7 @@ DEFAULT_STATE: Dict[str, Any] = {
     "id": "AETHER",
     "version": AETHER_VERSION,
     "status": "IDLE",
+    "mode": "core",
     "energy": 100,
     "focus": "STANDBY",
     "created_at": safe_now(),
@@ -1433,12 +1173,16 @@ DEFAULT_PROJECTS = [{"id": "default", "name": "Default", "created_at": safe_now(
 AETHER_PROJECTS: List[Dict[str, Any]] = []
 AETHER_TASKS: List[Dict[str, Any]] = []
 
+def enforce_core_mode(state: Dict[str, Any]) -> None:
+    state["mode"] = "core"
+
 def init_state() -> None:
     global _STATE_INITIALIZED, AETHER_STATE, AETHER_MEMORY, STRATEGIC_MEMORY, AETHER_LOGS, AETHER_PROJECTS, AETHER_TASKS
     if _STATE_INITIALIZED:
         return
     ensure_dirs()
     AETHER_STATE = load_json(STATE_FILE, dict(DEFAULT_STATE))
+    enforce_core_mode(AETHER_STATE)
     AETHER_MEMORY = load_json(MEMORY_FILE, [])
     STRATEGIC_MEMORY = load_json(
         STRATEGIC_FILE,
@@ -2226,6 +1970,7 @@ def snapshot_restore(name: str = "demo1") -> Dict[str, Any]:
     with state_lock:
         AETHER_STATE.clear()
         AETHER_STATE.update(st if isinstance(st, dict) else dict(DEFAULT_STATE))
+        enforce_core_mode(AETHER_STATE)
         AETHER_STATE["version"] = AETHER_VERSION
         AETHER_STATE["status"] = "FROZEN" if is_frozen() else AETHER_STATE.get("status", "IDLE")
         save_json_atomic(STATE_FILE, AETHER_STATE)
@@ -2389,6 +2134,7 @@ def replica_apply(payload: Dict[str, Any]) -> Dict[str, Any]:
     with state_lock:
         AETHER_STATE.clear()
         AETHER_STATE.update(st if isinstance(st, dict) else dict(DEFAULT_STATE))
+        enforce_core_mode(AETHER_STATE)
         AETHER_STATE["version"] = AETHER_VERSION
         AETHER_STATE["status"] = "FROZEN" if is_frozen() else AETHER_STATE.get("status", "IDLE")
         save_json_atomic(STATE_FILE, AETHER_STATE)
@@ -3570,6 +3316,7 @@ def _apply_recovery_payload(payload: Dict[str, Any]) -> None:
         prev_energy = AETHER_STATE.get("energy", DEFAULT_STATE.get("energy", 100))
         AETHER_STATE.clear()
         AETHER_STATE.update(st if isinstance(st, dict) else dict(DEFAULT_STATE))
+        enforce_core_mode(AETHER_STATE)
         # Preserve energy to avoid unintended budget shifts during recovery.
         AETHER_STATE["energy"] = prev_energy
         AETHER_STATE["version"] = AETHER_VERSION
@@ -3829,7 +3576,7 @@ def format_reply(decision: Dict[str, Any], result: Dict[str, Any]) -> str:
     mode = (decision or {}).get("mode", "general")
     if mode == "planner":
         payload = json.dumps(result.get("result"), indent=2, ensure_ascii=False)
-        return f"🧭 Plan propuesto (no ejecutado):\n\n{payload}"
+        return f"🧭 Esquema propuesto (no ejecutado):\n\n{payload}"
     if mode == "ai_module":
         mod = result.get("module") or "ai_module"
         payload = json.dumps(result.get("result"), indent=2, ensure_ascii=False)
@@ -4177,6 +3924,7 @@ def start_aether() -> str:
     with state_lock:
         AETHER_STATE["version"] = AETHER_VERSION
         AETHER_STATE["focus"] = "ACTIVE"
+        AETHER_STATE["mode"] = "core"
         if safe_mode_enabled():
             AETHER_STATE["status"] = "SAFE_MODE"
         else:
@@ -4218,19 +3966,7 @@ def start_aether() -> str:
 # GRADIO UI (HF SAFE)
 # -----------------------------
 
-def _account_status_text(account_state: Dict[str, str], lang: str = "es") -> str:
-    status = (account_state or {}).get("status") or ""
-    username = (account_state or {}).get("username") or ""
-    if isinstance(status, str) and status.lower() == "admin":
-        status_text = t(lang, "account_status_admin")
-    else:
-        status_text = t(lang, "account_status_guest")
-    if username and isinstance(status, str) and status.lower() == "admin":
-        return f"**{t(lang, 'account_status_label')}:** {status_text} ({username})"
-    return f"**{t(lang, 'account_status_label')}:** {status_text}"
-
-
-def ui_apply_language(lang: str, account_state: Dict[str, str]) -> Tuple[Any, ...]:
+def ui_apply_language(lang: str) -> Tuple[Any, ...]:
     resolved = normalize_lang(lang)
     return (
         resolved,
@@ -4246,7 +3982,7 @@ def ui_apply_language(lang: str, account_state: Dict[str, str]) -> Tuple[Any, ..
         gr.update(value=t(resolved, "refresh_status")),
         gr.update(value=t(resolved, "btn_builder")),
         gr.update(value=t(resolved, "btn_scientific")),
-        gr.update(label=t(resolved, "admin_ops")),
+        gr.update(label=t(resolved, "advanced_ops")),
         gr.update(value=t(resolved, "task_queue_title")),
         gr.update(label=t(resolved, "task_cmd_label"), placeholder=t(resolved, "task_cmd_placeholder")),
         gr.update(label=t(resolved, "priority_label")),
@@ -4305,26 +4041,13 @@ def ui_apply_language(lang: str, account_state: Dict[str, str]) -> Tuple[Any, ..
         gr.update(value=t(resolved, "send_button")),
         gr.update(value=t(resolved, "home_button")),
         gr.update(value=t(resolved, "config_title")),
-        gr.update(value=t(resolved, "config_account_title")),
-        gr.update(value=_account_status_text(account_state, resolved)),
-        gr.update(label=t(resolved, "username_label"), placeholder=t(resolved, "username_placeholder")),
-        gr.update(label=t(resolved, "pin_label"), placeholder=t(resolved, "pin_placeholder")),
-        gr.update(value=t(resolved, "login")),
-        gr.update(value=t(resolved, "logout")),
         gr.update(value=t(resolved, "config_language_title")),
         gr.update(label=t(resolved, "language_selector_label"), choices=LANGUAGE_CHOICES, value=resolved),
-        gr.update(value=t(resolved, "config_plans_title")),
-        gr.update(label=t(resolved, "plans_accordion_label")),
-        gr.update(value=t(resolved, "plan_free_text")),
-        gr.update(value=t(resolved, "plan_pro_text")),
-        gr.update(value=t(resolved, "plan_lab_text")),
-        gr.update(value=t(resolved, "plan_upgrade")),
-        gr.update(value=t(resolved, "plan_footer")),
         gr.update(value="<div style='font-size: 0.85em; color: #666;'>inf.aether@outlook.com</div>"),
     )
 
 
-def ui_init_language(account_state: Dict[str, str], request: gr.Request) -> Tuple[Any, ...]:
+def ui_init_language(request: gr.Request) -> Tuple[Any, ...]:
     accept_language = ""
     if request:
         try:
@@ -4332,21 +4055,7 @@ def ui_init_language(account_state: Dict[str, str], request: gr.Request) -> Tupl
         except Exception:
             accept_language = ""
     detected = detect_language_from_header(accept_language)
-    return ui_apply_language(detected, account_state)
-
-def _admin_env() -> Tuple[bool, str, str]:
-    pin = os.environ.get("AETHER_ADMIN_PIN", "").strip()
-    user = os.environ.get("AETHER_ADMIN_USER", "").strip()
-    return bool(pin), user, pin
-
-def _admin_visibility_updates(is_admin: bool) -> Tuple[gr.update, gr.update, gr.update, gr.update, gr.update]:
-    return (
-        gr.update(visible=is_admin),
-        gr.update(visible=is_admin),
-        gr.update(visible=is_admin),
-        gr.update(visible=is_admin),
-        gr.update(visible=is_admin),
-    )
+    return ui_apply_language(detected)
 
 def ui_set_view(view: str) -> Tuple[gr.update, gr.update, gr.update, gr.update, str]:
     return (
@@ -4356,35 +4065,6 @@ def ui_set_view(view: str) -> Tuple[gr.update, gr.update, gr.update, gr.update, 
         gr.update(visible=view == "config"),
         view,
     )
-
-def ui_login(
-    username: str, pin: str, account_state: Dict[str, str], lang: str
-) -> Tuple[bool, Dict[str, str], str, gr.update, gr.update, gr.update, gr.update, gr.update]:
-    username = (username or "").strip()
-    pin = (pin or "").strip()
-    admin_enabled, required_user, admin_pin = _admin_env()
-    is_admin = False
-    new_state = dict(account_state or {})
-    if admin_enabled and pin and hmac.compare_digest(pin, admin_pin):
-        if required_user and username != required_user:
-            is_admin = False
-        else:
-            is_admin = True
-    if is_admin:
-        new_state["status"] = "Admin"
-        new_state["username"] = username or (required_user or "admin")
-    else:
-        new_state["status"] = "Invitado"
-        new_state["username"] = ""
-    return (is_admin, new_state, _account_status_text(new_state, lang), *_admin_visibility_updates(is_admin))
-
-def ui_logout(
-    account_state: Dict[str, str], lang: str
-) -> Tuple[bool, Dict[str, str], str, gr.update, gr.update, gr.update, gr.update, gr.update]:
-    new_state = dict(account_state or {})
-    new_state["status"] = "Invitado"
-    new_state["username"] = ""
-    return (False, new_state, _account_status_text(new_state, lang), *_admin_visibility_updates(False))
 
 def build_ui() -> gr.Blocks:
     ensure_projects()
@@ -4401,8 +4081,6 @@ def build_ui() -> gr.Blocks:
     ) as demo:
         view_state = gr.State("home")
         language_state = gr.State("es")
-        account_state = gr.State({"status": "Invitado", "username": ""})
-        is_admin_state = gr.State(False)
         builder_initial_history = load_active("builder")
         scientific_initial_history = load_active("scientific")
         builder_saved_chats = load_chats("builder")
@@ -4439,15 +4117,15 @@ def build_ui() -> gr.Blocks:
 
                     with gr.Row():
                         btn_send = gr.Button(t("es", "send_chat"))
-                        btn_reload = gr.Button(t("es", "reload_modules"), visible=False)
-                        btn_export_demo = gr.Button(t("es", "export_demo1"), visible=False)
-                        btn_refresh_status = gr.Button(t("es", "refresh_status"), visible=False)
+                        btn_reload = gr.Button(t("es", "reload_modules"), visible=True)
+                        btn_export_demo = gr.Button(t("es", "export_demo1"), visible=True)
+                        btn_refresh_status = gr.Button(t("es", "refresh_status"), visible=True)
 
                     with gr.Row():
                         btn_builder = gr.Button(t("es", "btn_builder"), variant="primary")
                         btn_scientific = gr.Button(t("es", "btn_scientific"), variant="primary")
 
-                    with gr.Accordion(t("es", "admin_ops"), open=False, visible=False) as admin_ops:
+                    with gr.Accordion(t("es", "advanced_ops"), open=False, visible=True) as ops_panel:
                         task_queue_md = gr.Markdown(t("es", "task_queue_title"))
                         task_cmd = gr.Textbox(
                             label=t("es", "task_cmd_label"),
@@ -4584,34 +4262,12 @@ def build_ui() -> gr.Blocks:
             btn_home_from_config = gr.Button(t("es", "home_button"))
             config_title_md = gr.Markdown(t("es", "config_title"))
 
-            config_account_md = gr.Markdown(t("es", "config_account_title"))
-            account_status = gr.Markdown(_account_status_text({"status": "Invitado", "username": ""}, "es"))
-            account_username = gr.Textbox(label=t("es", "username_label"), placeholder=t("es", "username_placeholder"), lines=1)
-            account_pin = gr.Textbox(label=t("es", "pin_label"), placeholder=t("es", "pin_placeholder"), type="password", lines=1)
-            btn_login = gr.Button(t("es", "login"))
-            btn_logout = gr.Button(t("es", "logout"))
-
-            gr.Markdown("---")
             config_language_md = gr.Markdown(t("es", "config_language_title"))
             language_selector = gr.Dropdown(
                 label=t("es", "language_selector_label"),
                 choices=LANGUAGE_CHOICES,
                 value="es",
             )
-
-            gr.Markdown("---")
-            config_plans_md = gr.Markdown(t("es", "config_plans_title"))
-            with gr.Accordion(t("es", "plans_accordion_label"), open=False) as plans_accordion:
-                with gr.Row():
-                    with gr.Column():
-                        plan_free_md = gr.Markdown(t("es", "plan_free_text"))
-                    with gr.Column():
-                        plan_pro_md = gr.Markdown(t("es", "plan_pro_text"))
-                    with gr.Column():
-                        plan_lab_md = gr.Markdown(t("es", "plan_lab_text"))
-            btn_plan_upgrade = gr.Button(t("es", "plan_upgrade"))
-            plan_footer_md = gr.Markdown(t("es", "plan_footer"))
-
             gr.Markdown("---")
             config_email_html = gr.HTML(
                 "<div style='font-size: 0.85em; color: #666;'>inf.aether@outlook.com</div>"
@@ -4631,7 +4287,7 @@ def build_ui() -> gr.Blocks:
             btn_refresh_status,
             btn_builder,
             btn_scientific,
-            admin_ops,
+            ops_panel,
             task_queue_md,
             task_cmd,
             prio,
@@ -4690,21 +4346,8 @@ def build_ui() -> gr.Blocks:
             btn_scientific_send,
             btn_home_from_config,
             config_title_md,
-            config_account_md,
-            account_status,
-            account_username,
-            account_pin,
-            btn_login,
-            btn_logout,
             config_language_md,
             language_selector,
-            config_plans_md,
-            plans_accordion,
-            plan_free_md,
-            plan_pro_md,
-            plan_lab_md,
-            btn_plan_upgrade,
-            plan_footer_md,
             config_email_html,
         ]
 
@@ -4769,37 +4412,9 @@ def build_ui() -> gr.Blocks:
             outputs=[scientific_chat, scientific_chat_state, scientific_chats_state, scientific_chat_selector],
         )
 
-        btn_login.click(
-            fn=ui_login,
-            inputs=[account_username, account_pin, account_state, language_state],
-            outputs=[
-                is_admin_state,
-                account_state,
-                account_status,
-                boot_msg,
-                btn_reload,
-                btn_export_demo,
-                btn_refresh_status,
-                admin_ops,
-            ],
-        )
-        btn_logout.click(
-            fn=ui_logout,
-            inputs=[account_state, language_state],
-            outputs=[
-                is_admin_state,
-                account_state,
-                account_status,
-                boot_msg,
-                btn_reload,
-                btn_export_demo,
-                btn_refresh_status,
-                admin_ops,
-            ],
-        )
         language_selector.change(
             fn=ui_apply_language,
-            inputs=[language_selector, account_state],
+            inputs=[language_selector],
             outputs=language_outputs,
         )
 
@@ -4835,7 +4450,7 @@ def build_ui() -> gr.Blocks:
         )
 
         # boot (solo una vez)
-        demo.load(fn=ui_init_language, inputs=[account_state], outputs=language_outputs)
+        demo.load(fn=ui_init_language, inputs=[], outputs=language_outputs)
         demo.load(fn=start_aether, inputs=[], outputs=[boot_msg])
         demo.load(fn=ui_status, inputs=[], outputs=[status])
         demo.load(fn=ui_tail_logs, inputs=[logs_n], outputs=[logs])

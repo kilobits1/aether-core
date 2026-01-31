@@ -11,5 +11,5 @@ Objetivo:
 5. Integración de IA
 6. Deploy y escalado
 
-Estado: PLAN DE APP GENERADO
+Estado: ESQUEMA DE APP GENERADO
 """
