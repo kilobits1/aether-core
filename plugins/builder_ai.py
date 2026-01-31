@@ -12,6 +12,6 @@ def run(command: str, ctx=None, state=None):
         "next_steps": [
             "Clarificar objetivo y alcance",
             "Definir stack y componentes",
-            "Proponer plan inicial",
+            "Proponer esquema inicial",
         ],
     }
