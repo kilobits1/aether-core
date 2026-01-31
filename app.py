@@ -4568,6 +4568,7 @@ def get_demo() -> gr.Blocks:
     global _DEMO
     if _DEMO is None:
         init_state()
+        start_orchestrator()
         _DEMO = build_ui()
     return _DEMO
 
