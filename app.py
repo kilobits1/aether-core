@@ -755,6 +755,12 @@ AETHER_TASK_TIMEOUT_SEC = int(os.environ.get("AETHER_TASK_TIMEOUT_SEC", "20"))
 AETHER_TASK_BUDGET_MAX = int(os.environ.get("AETHER_TASK_BUDGET_MAX", str(max(1, int(AETHER_TASK_BUDGET)))))
 
 # -----------------------------
+# INTERNAL TASKS (v43)
+# -----------------------------
+AETHER_INTERNAL_TASK_INTERVAL_SEC = int(os.environ.get("AETHER_INTERNAL_TASK_INTERVAL_SEC", "180"))
+AETHER_INTERNAL_TASK_BUDGET = int(os.environ.get("AETHER_INTERNAL_TASK_BUDGET", "1"))
+
+# -----------------------------
 # TASK SECURITY (v40-v42)
 # -----------------------------
 AETHER_TASK_SECRET = os.environ.get("AETHER_TASK_SECRET", "")
@@ -1373,6 +1379,8 @@ DEFAULT_STATE: Dict[str, Any] = {
     "created_at": safe_now(),
     "last_cycle": None,
     "last_heartbeat_ts": None,
+    "last_internal_task_ts": None,
+    "last_stable_snapshot": None,
 }
 
 _STATE_INITIALIZED = False
@@ -1603,6 +1611,326 @@ def enable_safe_mode(reason: str) -> None:
         log_event("SAFE_MODE_ON", {"reason": SAFE_MODE.get("reason"), "since": SAFE_MODE.get("since")})
     with state_lock:
         AETHER_STATE["status"] = "SAFE_MODE"
+        save_json_atomic(STATE_FILE, AETHER_STATE)
+
+# -----------------------------
+# INTERNAL TASKS (v43)
+# -----------------------------
+
+_INTERNAL_TASK_LAST_TS = 0.0
+
+def _internal_task_should_run(now_ts: float) -> bool:
+    interval = max(10, int(AETHER_INTERNAL_TASK_INTERVAL_SEC))
+    return (now_ts - _INTERNAL_TASK_LAST_TS) >= interval
+
+def _snapshot_name_from_ts(prefix: str) -> str:
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    safe_prefix = "".join(ch for ch in (prefix or "").strip().lower() if ch.isalnum() or ch in ("-", "_"))
+    if not safe_prefix:
+        safe_prefix = "stable"
+    return f"{safe_prefix}-{stamp}"
+
+def _resolve_stable_snapshot_name() -> Optional[str]:
+    with state_lock:
+        name = AETHER_STATE.get("last_stable_snapshot")
+    if isinstance(name, str) and name in snapshot_list():
+        return name
+    payload, fallback = _latest_snapshot_payload()
+    if payload and fallback:
+        return fallback
+    return None
+
+def _ensure_stable_snapshot() -> Optional[str]:
+    name = _resolve_stable_snapshot_name()
+    if name:
+        return name
+    snap_name = _snapshot_name_from_ts("stable-bootstrap")
+    res = snapshot_create(snap_name)
+    if res.get("ok"):
+        with state_lock:
+            AETHER_STATE["last_stable_snapshot"] = snap_name
+            save_json_atomic(STATE_FILE, AETHER_STATE)
+        log_event("INTERNAL_TASK_STABLE_SNAPSHOT_CREATED", {"name": snap_name})
+        return snap_name
+    log_event("INTERNAL_TASK_STABLE_SNAPSHOT_FAIL", {"name": snap_name, "error": res.get("error")})
+    return None
+
+def _capture_state_snapshot() -> Dict[str, Any]:
+    with state_lock:
+        return dict(AETHER_STATE)
+
+def _rollback_to_stable_snapshot(reason: str, task_name: str, pre_state: Dict[str, Any]) -> None:
+    stable_name = _resolve_stable_snapshot_name()
+    if not stable_name:
+        log_event(
+            "INTERNAL_TASK_ROLLBACK_MISSING",
+            {"task": task_name, "reason": reason, "previous_state": pre_state, "timestamp": safe_now()},
+        )
+        return
+    res = snapshot_restore(stable_name)
+    post_state = _capture_state_snapshot()
+    log_event(
+        "INTERNAL_TASK_ROLLBACK",
+        {
+            "task": task_name,
+            "reason": reason,
+            "snapshot": stable_name,
+            "restore_ok": bool(res.get("ok")),
+            "previous_state": pre_state,
+            "restored_state": post_state,
+            "timestamp": safe_now(),
+        },
+    )
+
+def _validate_state_payload(state: Any) -> Tuple[bool, List[str]]:
+    issues: List[str] = []
+    if not isinstance(state, dict):
+        return False, ["state_not_dict"]
+    required = ["id", "version", "status", "energy", "focus", "created_at"]
+    for key in required:
+        if key not in state:
+            issues.append(f"missing_{key}")
+    energy = state.get("energy")
+    if not isinstance(energy, int):
+        issues.append("energy_not_int")
+    elif energy < 0:
+        issues.append("energy_negative")
+    return not issues, issues
+
+def _validate_memory_payload(mem: Any) -> Tuple[bool, List[str]]:
+    issues: List[str] = []
+    if not isinstance(mem, list):
+        return False, ["memory_not_list"]
+    for idx, entry in enumerate(mem[:10]):
+        if not isinstance(entry, dict):
+            issues.append(f"memory_entry_{idx}_not_dict")
+            break
+    return not issues, issues
+
+def _validate_tasks_payload(tasks: Any) -> Tuple[bool, List[str]]:
+    issues: List[str] = []
+    if not isinstance(tasks, list):
+        return False, ["tasks_not_list"]
+    for idx, task in enumerate(tasks[:10]):
+        if not isinstance(task, dict):
+            issues.append(f"task_{idx}_not_dict")
+            break
+    return not issues, issues
+
+def _internal_prevalidate_state() -> Tuple[bool, List[str]]:
+    with state_lock:
+        return _validate_state_payload(dict(AETHER_STATE))
+
+def _internal_postvalidate_state() -> Tuple[bool, List[str]]:
+    return _internal_prevalidate_state()
+
+def _internal_prevalidate_memory() -> Tuple[bool, List[str]]:
+    with memory_lock:
+        return _validate_memory_payload(list(AETHER_MEMORY))
+
+def _internal_postvalidate_memory() -> Tuple[bool, List[str]]:
+    return _internal_prevalidate_memory()
+
+def _internal_prevalidate_planning() -> Tuple[bool, List[str]]:
+    with tasks_lock:
+        return _validate_tasks_payload(list(AETHER_TASKS))
+
+def _internal_postvalidate_planning() -> Tuple[bool, List[str]]:
+    return _internal_prevalidate_planning()
+
+def _internal_prevalidate_snapshots() -> Tuple[bool, List[str]]:
+    return True, []
+
+def _internal_postvalidate_snapshots() -> Tuple[bool, List[str]]:
+    return True, []
+
+def _internal_task_state_integrity() -> Dict[str, Any]:
+    changed = False
+    with state_lock:
+        for key, value in DEFAULT_STATE.items():
+            if key not in AETHER_STATE:
+                AETHER_STATE[key] = value
+                changed = True
+        if not isinstance(AETHER_STATE.get("energy"), int):
+            raw_energy = AETHER_STATE.get("energy")
+            try:
+                AETHER_STATE["energy"] = int(raw_energy)
+            except (TypeError, ValueError):
+                AETHER_STATE["energy"] = 0
+            changed = True
+        if int(AETHER_STATE.get("energy", 0)) < 0:
+            AETHER_STATE["energy"] = 0
+            changed = True
+        if not AETHER_STATE.get("status"):
+            AETHER_STATE["status"] = "IDLE"
+            changed = True
+        if changed:
+            save_json_atomic(STATE_FILE, AETHER_STATE)
+    return {"ok": True, "changed": changed}
+
+def _internal_task_memory_hygiene() -> Dict[str, Any]:
+    changed = False
+    with memory_lock:
+        cleaned = [m for m in AETHER_MEMORY if isinstance(m, dict)]
+        if len(cleaned) != len(AETHER_MEMORY):
+            changed = True
+        if len(cleaned) > MAX_MEMORY_ENTRIES:
+            cleaned = cleaned[-MAX_MEMORY_ENTRIES:]
+            changed = True
+        if changed:
+            AETHER_MEMORY.clear()
+            AETHER_MEMORY.extend(cleaned)
+            save_json_atomic(MEMORY_FILE, AETHER_MEMORY)
+    return {"ok": True, "changed": changed}
+
+def _internal_task_planning_hygiene() -> Dict[str, Any]:
+    changed = False
+    with tasks_lock:
+        for task in AETHER_TASKS:
+            if not isinstance(task, dict):
+                continue
+            subtasks = task.get("subtasks")
+            if subtasks is None:
+                task["subtasks"] = []
+                changed = True
+                continue
+            if not isinstance(subtasks, list):
+                task["subtasks"] = []
+                changed = True
+                continue
+            cleaned = [str(s).strip() for s in subtasks if str(s).strip()]
+            cleaned = cleaned[:50]
+            if cleaned != subtasks:
+                task["subtasks"] = cleaned
+                changed = True
+        if changed:
+            save_json_atomic(TASKS_FILE, AETHER_TASKS)
+    return {"ok": True, "changed": changed}
+
+def _internal_task_snapshot_hygiene() -> Dict[str, Any]:
+    changed = False
+    entries = _load_snapshot_index()
+    if not entries:
+        _rebuild_snapshot_index()
+        changed = True
+    stable = _resolve_stable_snapshot_name()
+    if not stable:
+        stable = _ensure_stable_snapshot()
+        changed = True if stable else changed
+    if not stable:
+        return {"ok": False, "changed": changed, "stable_snapshot": None, "error": "no_stable_snapshot"}
+    return {"ok": True, "changed": changed, "stable_snapshot": stable}
+
+INTERNAL_TASKS = [
+    {
+        "name": "state_integrity",
+        "pre": _internal_prevalidate_state,
+        "execute": _internal_task_state_integrity,
+        "post": _internal_postvalidate_state,
+    },
+    {
+        "name": "memory_hygiene",
+        "pre": _internal_prevalidate_memory,
+        "execute": _internal_task_memory_hygiene,
+        "post": _internal_postvalidate_memory,
+    },
+    {
+        "name": "planning_hygiene",
+        "pre": _internal_prevalidate_planning,
+        "execute": _internal_task_planning_hygiene,
+        "post": _internal_postvalidate_planning,
+    },
+    {
+        "name": "snapshot_hygiene",
+        "pre": _internal_prevalidate_snapshots,
+        "execute": _internal_task_snapshot_hygiene,
+        "post": _internal_postvalidate_snapshots,
+    },
+]
+
+def _run_internal_task(task_def: Dict[str, Any]) -> None:
+    if KILL_SWITCH.get("status") != "ARMED":
+        log_event("INTERNAL_TASK_BLOCKED", {"task": task_def.get("name"), "reason": "KILL_SWITCH"})
+        return
+    if safe_mode_enabled():
+        log_event("INTERNAL_TASK_BLOCKED", {"task": task_def.get("name"), "reason": "SAFE_MODE"})
+        return
+    if is_frozen():
+        log_event("INTERNAL_TASK_BLOCKED", {"task": task_def.get("name"), "reason": "FROZEN"})
+        return
+    stable_name = _ensure_stable_snapshot()
+    pre_state = _capture_state_snapshot()
+    log_event(
+        "INTERNAL_TASK_START",
+        {"task": task_def.get("name"), "stable_snapshot": stable_name, "timestamp": safe_now()},
+    )
+    pre_ok, pre_issues = task_def["pre"]()
+    if not pre_ok:
+        log_event(
+            "INTERNAL_TASK_PRECHECK_FAIL",
+            {"task": task_def.get("name"), "issues": pre_issues, "timestamp": safe_now()},
+        )
+        _rollback_to_stable_snapshot("pre_validation_failed", task_def.get("name"), pre_state)
+        return
+
+    result = task_def["execute"]()
+    if not result.get("ok", True):
+        log_event(
+            "INTERNAL_TASK_EXEC_FAIL",
+            {"task": task_def.get("name"), "error": result.get("error"), "timestamp": safe_now()},
+        )
+        _rollback_to_stable_snapshot("execution_failed", task_def.get("name"), pre_state)
+        return
+    post_ok, post_issues = task_def["post"]()
+    if not post_ok:
+        log_event(
+            "INTERNAL_TASK_POSTCHECK_FAIL",
+            {"task": task_def.get("name"), "issues": post_issues, "timestamp": safe_now()},
+        )
+        _rollback_to_stable_snapshot("post_validation_failed", task_def.get("name"), pre_state)
+        return
+
+    if result.get("changed"):
+        snap_name = _snapshot_name_from_ts(f"stable-{task_def.get('name')}")
+        snap_res = snapshot_create(snap_name)
+        if not snap_res.get("ok"):
+            log_event(
+                "INTERNAL_TASK_SNAPSHOT_FAIL",
+                {"task": task_def.get("name"), "snapshot": snap_name, "error": snap_res.get("error")},
+            )
+            _rollback_to_stable_snapshot("snapshot_create_failed", task_def.get("name"), pre_state)
+            return
+        with state_lock:
+            AETHER_STATE["last_stable_snapshot"] = snap_name
+            save_json_atomic(STATE_FILE, AETHER_STATE)
+
+    log_event(
+        "INTERNAL_TASK_DONE",
+        {"task": task_def.get("name"), "changed": bool(result.get("changed")), "timestamp": safe_now()},
+    )
+
+def run_internal_tasks(throttle: Optional[Dict[str, Any]] = None) -> None:
+    global _INTERNAL_TASK_LAST_TS
+    now_ts = time.time()
+    if KILL_SWITCH.get("status") != "ARMED":
+        return
+    if safe_mode_enabled() or is_frozen():
+        return
+    if not _internal_task_should_run(now_ts):
+        return
+    budget = min(
+        max(1, int(AETHER_INTERNAL_TASK_BUDGET)),
+        max(1, int((throttle or {}).get("effective_budget", AETHER_TASK_BUDGET))),
+    )
+    ran = 0
+    for task_def in INTERNAL_TASKS:
+        if ran >= budget:
+            break
+        _run_internal_task(task_def)
+        ran += 1
+    _INTERNAL_TASK_LAST_TS = now_ts
+    with state_lock:
+        AETHER_STATE["last_internal_task_ts"] = safe_now()
         save_json_atomic(STATE_FILE, AETHER_STATE)
 
 # -----------------------------
@@ -3470,6 +3798,7 @@ def scheduler_loop() -> None:
                 AETHER_STATE["focus"] = "RECOVERY" if int(AETHER_STATE.get("energy", 0)) < 20 else "ACTIVE"
                 save_json_atomic(STATE_FILE, AETHER_STATE)
 
+            run_internal_tasks(throttle)
             update_dashboard()
             sched_sleep = float(throttle.get("effective_sched_sleep_sec", BASE_SCHED_SLEEP_SEC))
             time.sleep(max(SCHED_SLEEP_MIN_SEC, sched_sleep))
