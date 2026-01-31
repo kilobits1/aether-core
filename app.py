@@ -982,6 +982,7 @@ ORCHESTRATOR_STATE = {
     "since": None,
     "last_task": None,
     "blocked_reason": None,
+    "last_heartbeat_ts": None,
 }
 orchestrator_state_lock = threading.Lock()
 
@@ -1326,6 +1327,10 @@ def _set_orchestrator_state(status: str, blocked_reason: Optional[str] = None, l
             ORCHESTRATOR_STATE["since"] = safe_now()
         if last_task is not None:
             ORCHESTRATOR_STATE["last_task"] = last_task
+
+def _orchestrator_heartbeat() -> None:
+    with orchestrator_state_lock:
+        ORCHESTRATOR_STATE["last_heartbeat_ts"] = safe_now()
 
 LOADED_MODULES: Dict[str, Any] = {}
 
@@ -2790,10 +2795,12 @@ def orchestrator_loop() -> None:
                 run_project_task(task_id)
             else:
                 _set_orchestrator_state("RUNNING", blocked_reason=None)
+                _orchestrator_heartbeat()
             time.sleep(ORCHESTRATOR_TICK_SEC)
         except Exception as e:
             log_event("ORCHESTRATOR_ERROR", {"error": str(e)})
             time.sleep(ORCHESTRATOR_TICK_SEC)
+    _set_orchestrator_state("STOPPED")
 
 def _store_memory_event(task_id: str, command: str, decision: Dict[str, Any], result: Dict[str, Any], source: str) -> None:
     with memory_lock:
