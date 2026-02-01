@@ -519,6 +519,7 @@ TRUST_ZONES = {"UI", "CHAT", "INTERNAL", "ORCH"}
 TRUST_ZONE_DEFAULT = "CHAT"
 TRUST_ZONE_BLOCK_WINDOW = 50
 OWNER_ONLY_SPECIALS = {"reload_plugins", "snapshot_create", "snapshot_export", "snapshot_import", "snapshot_restore"}
+TRUST_ZONE_ENV_VAR = "AETHER_TRUST_ZONE_ENABLED"
 
 # Policy matrix (explicit allowlist, default deny).
 # How to test (manual):
@@ -609,6 +610,18 @@ def _owner_only_gate(command: str) -> Tuple[bool, str, Optional[Dict[str, Any]]]
         return False, command, {"ok": False, "error": "owner-only: blocked", "hint": "use owner:<KEY> <cmd>"}
     return True, stripped, None
 
+def _trust_zone_enabled() -> bool:
+    return os.environ.get(TRUST_ZONE_ENV_VAR, "").strip() == "1"
+
+def _executor_phase(command: str) -> str:
+    cmd = (command or "").strip().lower()
+    if not cmd.startswith("exec "):
+        return ""
+    phase = cmd[len("exec ") :].strip().split(" ", 1)[0]
+    if phase in {"propose", "approve", "apply"}:
+        return phase
+    return ""
+
 def _trust_zone_allowed(zone: str, task_type: str, command: str) -> Tuple[bool, str, List[str]]:
     if zone not in TRUST_ZONES:
         return False, "invalid_zone", []
@@ -616,6 +629,13 @@ def _trust_zone_allowed(zone: str, task_type: str, command: str) -> Tuple[bool, 
     allowed_types = policy.get("task_types") or set()
     allowed_special = policy.get("special") or set()
     specials = _detect_special_commands(command)
+    phase = _executor_phase(command)
+    if phase:
+        if not _trust_zone_enabled():
+            if phase == "propose":
+                return True, "", specials
+            return False, "trust_zone_disabled", specials
+        return True, "", specials
 
     if task_type == "system":
         return False, "system_blocked", specials

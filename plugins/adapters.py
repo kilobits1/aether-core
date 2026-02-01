@@ -1,6 +1,7 @@
 # plugins/adapters.py
-import os
 import json
+import logging
+import os
 import subprocess
 from typing import Any, Dict, List, Optional
 
@@ -20,16 +21,46 @@ class Adapters:
         self.allowed_http_domains = allowed_http_domains or []  # vacío = HTTP bloqueado
 
     # -------- Files --------
+    def _trust_zone_enabled(self) -> bool:
+        return os.environ.get("AETHER_TRUST_ZONE_ENABLED", "").strip() == "1"
+
+    def _normalize_rel_path(self, rel_path: str) -> str:
+        raw = (rel_path or "").strip().replace("\\", "/")
+        if raw.startswith("/"):
+            raise PolicyError("Absolute path blocked")
+        parts = [p for p in raw.split("/") if p not in ("", ".")]
+        if any(p == ".." for p in parts):
+            raise PolicyError("Path traversal blocked")
+        return "/".join(parts)
+
+    def _is_allowed_write_path(self, rel_path: str) -> bool:
+        if rel_path in {"app.py", "README.md"}:
+            return True
+        return rel_path.startswith("data/")
+
+    def _log_block(self, op: str, rel_path: str, reason: str) -> None:
+        logging.warning("FILESYSTEM_BLOCKED op=%s path=%s reason=%s", op, rel_path, reason)
+
     def _safe_path(self, rel_path: str) -> str:
-        rel_path = (rel_path or "").lstrip("/").replace("\\", "/")
+        rel_path = self._normalize_rel_path(rel_path)
         full = os.path.abspath(os.path.join(self.base_dir, rel_path))
         base = os.path.abspath(self.base_dir)
-        if not full.startswith(base):
+        if not (full == base or full.startswith(base + os.sep)):
             raise PolicyError("Path traversal blocked")
         return full
 
     def write_text(self, rel_path: str, text: str) -> Dict[str, Any]:
-        path = self._safe_path(rel_path)
+        normalized = self._normalize_rel_path(rel_path)
+        if not normalized:
+            self._log_block("write", rel_path, "empty_path")
+            raise PolicyError("Empty path blocked")
+        if not self._trust_zone_enabled():
+            self._log_block("write", normalized, "trust_zone_disabled")
+            raise PolicyError("TRUST_ZONE_BLOCKED")
+        if not self._is_allowed_write_path(normalized):
+            self._log_block("write", normalized, "path_not_allowed")
+            raise PolicyError("Write path blocked by allowlist")
+        path = self._safe_path(normalized)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)
