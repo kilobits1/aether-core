@@ -38,6 +38,7 @@ from typing import Any, Dict, List, Tuple, Optional
 import gradio as gr
 from plugins.adapters import Adapters
 from core.orchestrator import Orchestrator
+from plugins.aether_core import ensure_orchestrator_autostart
 
 
 SUPPORTED_LANGS = ("es", "en", "pt-BR", "pt-PT")
@@ -4039,53 +4040,6 @@ _STARTED = False
 _worker_thread = None
 _sched_thread = None
 _watchdog_thread = None
-_orchestrator_thread = None
-_ORCHESTRATOR_STARTED = False
-orchestrator_start_lock = threading.Lock()
-
-# -----------------------------
-# STARTUP (safe once)
-# -----------------------------
-
-def _resolve_orchestrator(ctx: Optional[Any] = None, state: Optional[Dict[str, Any]] = None, app_obj: Optional[Any] = None) -> Optional[Any]:
-    candidates = (
-        getattr(ctx, "orchestrator", None) if ctx else None,
-        state.get("orchestrator") if isinstance(state, dict) else None,
-        getattr(app_obj, "orchestrator", None) if app_obj else None,
-        ORCHESTRATOR,
-    )
-    for candidate in candidates:
-        if candidate:
-            return candidate
-    return None
-
-def _autostart_orchestrator(ctx: Optional[Any] = None, state: Optional[Dict[str, Any]] = None, app_obj: Optional[Any] = None) -> None:
-    if safe_mode_enabled():
-        return
-    if not ORCHESTRATOR_POLICY.get("allow_run", True):
-        return
-    orchestrator_obj = _resolve_orchestrator(ctx=ctx, state=state, app_obj=app_obj)
-    if not orchestrator_obj:
-        return
-    started = False
-    try:
-        if hasattr(orchestrator_obj, "start") and callable(getattr(orchestrator_obj, "start")):
-            _set_orchestrator_state("RUNNING")
-            orchestrator_obj.start(AETHER_STATE)
-            started = True
-        else:
-            _set_orchestrator_state("RUNNING")
-            if isinstance(state, dict):
-                stub_state = state.get("orchestrator")
-                if isinstance(stub_state, dict):
-                    stub_state["status"] = "RUNNING"
-            started = True
-        if started:
-            global _ORCHESTRATOR_STARTED
-            _ORCHESTRATOR_STARTED = True
-            log_event("ORCHESTRATOR_AUTOSTART", {"message": "Orchestrator autostarted at boot"})
-    except Exception as exc:
-        log_event("ORCHESTRATOR_AUTOSTART_FAILED", {"error": str(exc)})
 
 def start_aether() -> str:
     global _STARTED, _worker_thread, _sched_thread, _watchdog_thread
@@ -4138,18 +4092,15 @@ def start_aether() -> str:
             "orchestrator_policy": dict(ORCHESTRATOR_POLICY),
         },
     )
-    _autostart_orchestrator(state=AETHER_STATE, app_obj=sys.modules.get(__name__))
     update_dashboard()
+    ensure_orchestrator_autostart(
+        orchestrator_obj=ORCHESTRATOR,
+        state=AETHER_STATE,
+        dashboard_path=DASHBOARD_FILE,
+        log_fn=lambda message: log_event("ORCHESTRATOR_AUTOSTART", {"message": message}),
+        warn_fn=lambda message: log_event("ORCHESTRATOR_AUTOSTART_WARNING", {"message": message}),
+    )
     return "✅ AETHER iniciado correctamente."
-
-def start_orchestrator() -> None:
-    global _ORCHESTRATOR_STARTED, _orchestrator_thread
-    with orchestrator_start_lock:
-        if _ORCHESTRATOR_STARTED:
-            return
-        _ORCHESTRATOR_STARTED = True
-        _set_orchestrator_state("RUNNING")
-        ORCHESTRATOR.start(AETHER_STATE)
 
 # -----------------------------
 # GRADIO UI (HF SAFE)
@@ -4655,7 +4606,6 @@ def get_demo() -> gr.Blocks:
     global _DEMO
     if _DEMO is None:
         init_state()
-        start_orchestrator()
         _DEMO = build_ui()
     return _DEMO
 
