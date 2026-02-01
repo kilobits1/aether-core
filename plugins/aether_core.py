@@ -75,6 +75,13 @@ def load_state():
 def save_state(state: dict):
     _write_json(STATE_FILE, state)
 
+def touch_last_cycle(state: dict = None) -> None:
+    target = state or STATE
+    if not isinstance(target, dict):
+        return
+    target["last_cycle"] = safe_now()
+    save_state(target)
+
 def load_memory():
     m = _read_json(MEMORY_FILE, [])
     if not isinstance(m, list):
@@ -117,6 +124,23 @@ def _update_dashboard_orchestrator_status(status: str, path: str = DASHBOARD_FIL
     orchestrator["status"] = status
     dashboard["orchestrator"] = orchestrator
     _save_dashboard(dashboard, path)
+
+def _reset_safe_mode_if_watchdog_stall(path: str = DASHBOARD_FILE) -> bool:
+    dashboard = _load_dashboard(path)
+    safe_mode = dashboard.get("safe_mode")
+    if not isinstance(safe_mode, dict):
+        return False
+    if not safe_mode.get("enabled"):
+        return False
+    reason = (safe_mode.get("reason") or "").upper()
+    if reason != "WATCHDOG_STALL":
+        return False
+    safe_mode["enabled"] = False
+    safe_mode["since"] = None
+    safe_mode["reason"] = ""
+    dashboard["safe_mode"] = safe_mode
+    _save_dashboard(dashboard, path)
+    return True
 
 def ensure_orchestrator_autostart(
     orchestrator_obj=None,
@@ -228,6 +252,7 @@ def _start_task_runner():
 
     _runner_thread = threading.Thread(target=runner.start_loop, daemon=True)
     _runner_thread.start()
+    touch_last_cycle()
 
 def enqueue_task(task_type: str, payload: dict, priority: int = 50, max_attempts: int = 3, timeout_s: int = 60):
     _start_task_runner()
@@ -323,9 +348,16 @@ def handle_chat(user_text: str):
     if not text:
         return _msg("Escribe un comando.")
 
+    touch_last_cycle()
+
     # Comandos de diagnóstico rápidos
     if text.lower() in ("status", "estado"):
         return _msg(json.dumps(get_system_status(), ensure_ascii=False, indent=2))
+
+    if text.lower() in ("reset safe mode", "reset safe_mode", "reset safemode"):
+        if _reset_safe_mode_if_watchdog_stall():
+            return _msg("SAFE_MODE reiniciado (WATCHDOG_STALL).")
+        return _msg("SAFE_MODE no estaba activo o no fue generado por WATCHDOG_STALL.")
 
     if text.lower() in ("modules", "modulos", "módulos"):
         return _msg(f"Modules: {get_modules()}")
