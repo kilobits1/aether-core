@@ -3,6 +3,7 @@ import os
 import json
 import uuid
 import threading
+import logging
 from datetime import datetime, timezone
 
 # -----------------------------
@@ -20,6 +21,9 @@ STRATEGIC_FILE = os.path.join(DATA_DIR, "aether_strategic.json")
 
 AETHER_ID = "AETHER"
 AETHER_VERSION = "3.5.2-heartbeat-switch"
+DASHBOARD_FILE = os.path.join(DATA_DIR, "aether_dashboard.json")
+
+logger = logging.getLogger(__name__)
 
 # -----------------------------
 # Helpers
@@ -96,9 +100,84 @@ def load_strategic():
 def save_strategic(st: dict):
     _write_json(STRATEGIC_FILE, st)
 
+def _load_dashboard(path: str = DASHBOARD_FILE) -> dict:
+    data = _read_json(path, {})
+    if isinstance(data, dict):
+        return data
+    return {}
+
+def _save_dashboard(data: dict, path: str = DASHBOARD_FILE) -> None:
+    _write_json(path, data)
+
+def _update_dashboard_orchestrator_status(status: str, path: str = DASHBOARD_FILE) -> None:
+    dashboard = _load_dashboard(path)
+    orchestrator = dashboard.get("orchestrator")
+    if not isinstance(orchestrator, dict):
+        orchestrator = {}
+    orchestrator["status"] = status
+    dashboard["orchestrator"] = orchestrator
+    _save_dashboard(dashboard, path)
+
+def ensure_orchestrator_autostart(
+    orchestrator_obj=None,
+    state: dict = None,
+    dashboard_path: str = DASHBOARD_FILE,
+    log_fn=None,
+    warn_fn=None,
+) -> bool:
+    global _ORCHESTRATOR_AUTOSTARTED
+    with _ORCHESTRATOR_AUTOSTART_LOCK:
+        if _ORCHESTRATOR_AUTOSTARTED:
+            return False
+        dashboard = _load_dashboard(dashboard_path)
+        safe_mode_enabled = bool(dashboard.get("safe_mode", {}).get("enabled"))
+        allow_run = bool(dashboard.get("orchestrator_policy", {}).get("allow_run"))
+        if safe_mode_enabled or not allow_run:
+            return False
+        orch = orchestrator_obj or ORCHESTRATOR
+        if not orch:
+            return False
+        def _log(message: str) -> None:
+            if log_fn:
+                log_fn(message)
+            else:
+                logger.info(message)
+        def _warn(message: str) -> None:
+            if warn_fn:
+                warn_fn(message)
+            else:
+                logger.warning(message)
+        started = False
+        try:
+            if hasattr(orch, "start") and callable(getattr(orch, "start")):
+                orch.start(state or STATE)
+                started = True
+            else:
+                _update_dashboard_orchestrator_status("RUNNING", dashboard_path)
+                _warn("Orchestrator start() missing; wrote RUNNING status stub")
+                started = True
+        except Exception as exc:
+            _warn(f"Orchestrator autostart failed: {exc}")
+            return False
+        if started:
+            _ORCHESTRATOR_AUTOSTARTED = True
+            _log("Orchestrator autostarted at boot")
+        return started
+
 STATE = load_state()
 MEMORY = load_memory()
 STRATEGIC = load_strategic()
+
+AETHER_STATE = STATE
+
+try:
+    from core.orchestrator import Orchestrator
+except Exception:
+    Orchestrator = None
+
+ORCHESTRATOR = Orchestrator(dashboard_path=DASHBOARD_FILE) if Orchestrator else None
+_ORCHESTRATOR_AUTOSTARTED = False
+_ORCHESTRATOR_AUTOSTART_LOCK = threading.Lock()
 
 # -----------------------------
 # Kill switch (simple)
@@ -206,6 +285,10 @@ def get_system_status():
     except Exception:
         queue_size = 0
 
+    dashboard = _load_dashboard()
+    orchestrator_snapshot = dashboard.get("orchestrator")
+    if not isinstance(orchestrator_snapshot, dict):
+        orchestrator_snapshot = {}
     return {
         "state": STATE,
         "queue_size": queue_size,
@@ -217,6 +300,12 @@ def get_system_status():
             "history_len": STRATEGIC.get("history_len", 0),
         },
         "kill_switch": KILL_SWITCH,
+        "orchestrator_policy": dashboard.get("orchestrator_policy", {}),
+        "orchestrator": {
+            "status": orchestrator_snapshot.get("status"),
+            "queue_length": orchestrator_snapshot.get("queue_length"),
+            "blocked_reason": orchestrator_snapshot.get("blocked_reason"),
+        },
         "modules": modules,
         "data_dir": DATA_DIR,
         "version": AETHER_VERSION,
