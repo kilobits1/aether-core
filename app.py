@@ -1026,6 +1026,7 @@ ORCHESTRATOR = Orchestrator(
     kill_switch_ref=KILL_SWITCH,
     on_state=_sync_orchestrator_state,
 )
+orchestrator = ORCHESTRATOR
 
 # -----------------------------
 # JSON IO (atomic)
@@ -4046,6 +4047,46 @@ orchestrator_start_lock = threading.Lock()
 # STARTUP (safe once)
 # -----------------------------
 
+def _resolve_orchestrator(ctx: Optional[Any] = None, state: Optional[Dict[str, Any]] = None, app_obj: Optional[Any] = None) -> Optional[Any]:
+    candidates = (
+        getattr(ctx, "orchestrator", None) if ctx else None,
+        state.get("orchestrator") if isinstance(state, dict) else None,
+        getattr(app_obj, "orchestrator", None) if app_obj else None,
+        ORCHESTRATOR,
+    )
+    for candidate in candidates:
+        if candidate:
+            return candidate
+    return None
+
+def _autostart_orchestrator(ctx: Optional[Any] = None, state: Optional[Dict[str, Any]] = None, app_obj: Optional[Any] = None) -> None:
+    if safe_mode_enabled():
+        return
+    if not ORCHESTRATOR_POLICY.get("allow_run", True):
+        return
+    orchestrator_obj = _resolve_orchestrator(ctx=ctx, state=state, app_obj=app_obj)
+    if not orchestrator_obj:
+        return
+    started = False
+    try:
+        if hasattr(orchestrator_obj, "start") and callable(getattr(orchestrator_obj, "start")):
+            _set_orchestrator_state("RUNNING")
+            orchestrator_obj.start(AETHER_STATE)
+            started = True
+        else:
+            _set_orchestrator_state("RUNNING")
+            if isinstance(state, dict):
+                stub_state = state.get("orchestrator")
+                if isinstance(stub_state, dict):
+                    stub_state["status"] = "RUNNING"
+            started = True
+        if started:
+            global _ORCHESTRATOR_STARTED
+            _ORCHESTRATOR_STARTED = True
+            log_event("ORCHESTRATOR_AUTOSTART", {"message": "Orchestrator autostarted at boot"})
+    except Exception as exc:
+        log_event("ORCHESTRATOR_AUTOSTART_FAILED", {"error": str(exc)})
+
 def start_aether() -> str:
     global _STARTED, _worker_thread, _sched_thread, _watchdog_thread
     if _STARTED:
@@ -4097,6 +4138,7 @@ def start_aether() -> str:
             "orchestrator_policy": dict(ORCHESTRATOR_POLICY),
         },
     )
+    _autostart_orchestrator(state=AETHER_STATE, app_obj=sys.modules.get(__name__))
     update_dashboard()
     return "✅ AETHER iniciado correctamente."
 
